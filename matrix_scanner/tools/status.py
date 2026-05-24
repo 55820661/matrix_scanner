@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from matrix_scanner.reports.formatter import status_summary
-from matrix_scanner.scheduler import collect_scan
+from matrix_scanner.tools.performance import server_performance
 
 
 def get_status(context: dict) -> dict:
-    scan = collect_scan(context["config"])
-    return {"summary_text": status_summary(scan), "scan": scan}
+    result = server_performance(context)
+    return {
+        "summary_text": result["summary_text"],
+        "scan": result["scan"],
+        "performance_rows": result["rows"],
+    }

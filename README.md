@@ -19,6 +19,7 @@ This repository contains the initial scaffold:
 ## Quick Start
 ```bash
 python -m matrix_scanner.cli --config config.memory.example.yaml status
+python -m matrix_scanner.cli --config config.memory.example.yaml performance
 python -m matrix_scanner.cli --config config.memory.example.yaml scan
 python -m matrix_scanner.cli --config config.memory.example.yaml report
 python -B -m unittest discover -s tests

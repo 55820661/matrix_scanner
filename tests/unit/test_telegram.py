@@ -7,7 +7,8 @@ from matrix_scanner.tool_registry import ToolSpec
 
 class TelegramTests(unittest.TestCase):
     def test_map_command_to_tool(self):
-        self.assertEqual(map_command("/status"), "get_status")
+        self.assertEqual(map_command("/status"), "server_performance")
+        self.assertEqual(map_command("/performance"), "server_performance")
         self.assertEqual(map_command("/report please"), "generate_report")
         self.assertIsNone(map_command("status"))
 
@@ -41,12 +42,12 @@ class TelegramTests(unittest.TestCase):
         conn = db.connect(":memory:")
         sent = []
         registry = {
-            "get_status": ToolSpec(
-                "get_status",
+            "server_performance": ToolSpec(
+                "server_performance",
                 "Status",
                 "Status",
                 lambda context: {"summary_text": "الحالة العامة: جيدة"},
-                "get_status",
+                "server_performance",
             )
         }
         update = {"message": {"text": "/status", "from": {"id": 123}, "chat": {"id": 456}}}
@@ -61,11 +62,11 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "handled")
-        self.assertEqual(result["tool_key"], "get_status")
+        self.assertEqual(result["tool_key"], "server_performance")
         self.assertEqual(sent, [("token", 456, "الحالة العامة: جيدة")])
         row = conn.execute("SELECT source, tool_key, status FROM tool_invocations").fetchone()
         self.assertEqual(row["source"], "telegram")
-        self.assertEqual(row["tool_key"], "get_status")
+        self.assertEqual(row["tool_key"], "server_performance")
         self.assertEqual(row["status"], "completed")
 
     def test_handle_update_sends_short_report_for_report_command(self):
@@ -100,12 +101,12 @@ class TelegramTests(unittest.TestCase):
         conn = db.connect(":memory:")
         sent = []
         registry = {
-            "get_status": ToolSpec(
-                "get_status",
+            "server_performance": ToolSpec(
+                "server_performance",
                 "Status",
                 "Status",
                 lambda context: {"summary_text": "ok"},
-                "get_status",
+                "server_performance",
             )
         }
 

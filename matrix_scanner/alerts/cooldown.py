@@ -12,7 +12,7 @@ def filter_alerts_for_cooldown(conn, alerts: list[dict], cooldown_minutes: int =
         row = conn.execute(
             """
             SELECT created_at FROM alerts
-            WHERE alert_key = ? AND created_at >= ?
+            WHERE alert_key = ? AND datetime(created_at) >= datetime(?)
             ORDER BY created_at DESC
             LIMIT 1
             """,

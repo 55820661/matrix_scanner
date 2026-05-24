@@ -27,12 +27,14 @@ class ToolSpec:
 def build_registry() -> dict[str, ToolSpec]:
     from matrix_scanner.tools.disk import get_disk
     from matrix_scanner.tools.logs import get_laravel_errors, get_nginx_errors
+    from matrix_scanner.tools.performance import server_performance
     from matrix_scanner.tools.report import generate_report
     from matrix_scanner.tools.services import get_services
     from matrix_scanner.tools.status import get_status
 
     specs = [
         ToolSpec("get_status", "Status", "General server status.", get_status, "get_status"),
+        ToolSpec("server_performance", "Server Performance", "Aggregated server performance summary.", server_performance, "server_performance"),
         ToolSpec("get_disk", "Disk", "Disk usage summary.", get_disk, "get_disk"),
         ToolSpec("get_services", "Services", "Configured service status.", get_services, "get_services"),
         ToolSpec("get_nginx_errors", "Nginx Errors", "Nginx error summary.", get_nginx_errors, "get_nginx_errors", type="diagnostic"),

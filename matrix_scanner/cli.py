@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init-db")
     sub.add_parser("scan")
     sub.add_parser("status")
+    sub.add_parser("performance")
     sub.add_parser("disk")
     sub.add_parser("services")
     sub.add_parser("report")
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tool_key = {
         "status": "get_status",
+        "performance": "server_performance",
         "disk": "get_disk",
         "services": "get_services",
         "report": "generate_report",

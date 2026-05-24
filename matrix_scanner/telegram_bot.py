@@ -10,7 +10,8 @@ from matrix_scanner.security import Principal, is_telegram_allowed, truncate_tex
 from matrix_scanner.tool_executor import execute_tool
 
 COMMAND_TO_TOOL = {
-    "/status": "get_status",
+    "/status": "server_performance",
+    "/performance": "server_performance",
     "/disk": "get_disk",
     "/services": "get_services",
     "/nginx": "get_nginx_errors",
@@ -80,7 +81,7 @@ def handle_update(
 
     tool_key = map_command(text)
     if tool_key is None:
-        send_func(token, chat_id, "الأمر غير معروف. الأوامر المتاحة: /status /disk /services /nginx /laravel /report")
+        send_func(token, chat_id, "الأمر غير معروف. الأوامر المتاحة: /status /performance /disk /services /nginx /laravel /report")
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
