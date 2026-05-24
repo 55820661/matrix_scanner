@@ -18,6 +18,10 @@ class ServiceInfo:
     environment_file: str = ""
 
 
+class InvalidServiceSelection(ValueError):
+    """Raised when setup service selection is not all/none/numeric."""
+
+
 EXCLUDED_SERVICE_PREFIXES = (
     "systemd-",
     "user@",
@@ -180,14 +184,23 @@ def parse_service_selection(selection: str, services: list[ServiceInfo]) -> list
     for token in value.split(","):
         item = token.strip()
         if not item:
-            continue
-        if item.isdigit():
-            index = int(item) - 1
-            if 0 <= index < len(services):
-                selected.append(services[index].name)
-            continue
-        selected.append(_strip_service_suffix(item))
+            raise InvalidServiceSelection("empty selection item")
+        if not item.isdigit():
+            raise InvalidServiceSelection("service names are not accepted")
+        index = int(item) - 1
+        if not 0 <= index < len(services):
+            raise InvalidServiceSelection("selection index out of range")
+        selected.append(services[index].name)
     return _dedupe(selected)
+
+
+def prompt_service_selection(input_func: Callable[[str], str], services: list[ServiceInfo]) -> list[str]:
+    while True:
+        selection = input_func("Select services to monitor (1,2,4 / all / none): ")
+        try:
+            return parse_service_selection(selection, services)
+        except InvalidServiceSelection:
+            print("Invalid selection. Please enter numbers only, all, or none.")
 
 
 def build_config_yaml(
@@ -295,14 +308,9 @@ def run_interactive_setup(
             state = f" [{service.active_state}]" if service.active_state else ""
             print(f"[{index}] {service.name}{state}{suffix}")
     else:
-        print("No systemd services discovered. You can still enter service names manually.")
+        print("No candidate services discovered.")
 
-    selection = input_func("Select services to monitor (1,2,4 / all / none): ")
-    selected = parse_service_selection(selection, services)
-    manual = input_func("Additional service names, comma-separated (optional): ").strip()
-    if manual:
-        selected.extend(parse_service_selection(manual, []))
-        selected = _dedupe(selected)
+    selected = prompt_service_selection(input_func, services)
 
     enriched = [enrich_service_metadata(ServiceInfo(name=service)) for service in selected]
     suggested_app_path = _first_non_empty([service.working_directory for service in enriched], "/var/www/app")

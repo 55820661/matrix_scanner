@@ -6,10 +6,12 @@ from unittest import mock
 
 from matrix_scanner.cli import main
 from matrix_scanner.setup import (
+    InvalidServiceSelection,
     ServiceInfo,
     build_config_yaml,
     filter_setup_services,
     parse_service_selection,
+    prompt_service_selection,
     run_interactive_setup,
     should_overwrite_config,
 )
@@ -91,8 +93,35 @@ class SetupTests(unittest.TestCase):
 
         self.assertEqual([service.name for service in result], ["systemd-journald", "apt-daily", "nginx"])
 
-    def test_manual_input_still_works_for_hidden_service(self):
-        self.assertEqual(parse_service_selection("custom-worker,another-service", []), ["custom-worker", "another-service"])
+    def test_service_name_selection_is_rejected(self):
+        with self.assertRaises(InvalidServiceSelection):
+            parse_service_selection("nginx", SERVICES)
+
+    def test_invalid_selection_reprompts_without_traceback(self):
+        answers = iter(["nginx", "1"])
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            result = prompt_service_selection(lambda prompt: next(answers), SERVICES)
+
+        self.assertEqual(result, ["nginx"])
+        self.assertIn("Invalid selection. Please enter numbers only, all, or none.", output.getvalue())
+        self.assertNotIn("Traceback", output.getvalue())
+
+    def test_setup_does_not_prompt_for_additional_service_names(self):
+        prompts = []
+        answers = iter(["none", "", "", "", "", "", ""])
+
+        def input_func(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        with mock.patch("matrix_scanner.setup.discover_systemd_services", return_value=[]):
+            with mock.patch("matrix_scanner.setup.write_config", return_value=True):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    run_interactive_setup(Path("ignored.yaml"), input_func=input_func)
+
+        self.assertFalse(any("Additional service names" in prompt for prompt in prompts))
 
     def test_run_setup_keyboard_interrupt_leaves_no_config(self):
         path = Path("setup_cancelled_test_config.yaml")
