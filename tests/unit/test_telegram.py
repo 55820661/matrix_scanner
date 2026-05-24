@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from matrix_scanner import db
 from matrix_scanner.cli import _telegram_bot
-from matrix_scanner.telegram_bot import format_tool_response, handle_update, is_update_allowed, map_command, poll_once
+from matrix_scanner.telegram_bot import MENU_PROMPT, command_keyboard, format_tool_response, handle_update, is_update_allowed, map_command, poll_once
 from matrix_scanner.telegram_bot import run_long_polling
 from matrix_scanner.tool_registry import ToolSpec
 
@@ -72,7 +72,7 @@ class TelegramTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "handled")
         self.assertEqual(result["tool_key"], "server_performance")
-        self.assertEqual(sent, [("token", 456, "الحالة العامة: جيدة")])
+        self.assertEqual(sent, [("token", 456, "الحالة العامة: جيدة"), ("token", 456, MENU_PROMPT)])
         row = conn.execute("SELECT source, tool_key, status FROM tool_invocations").fetchone()
         self.assertEqual(row["source"], "telegram")
         self.assertEqual(row["tool_key"], "server_performance")
@@ -101,10 +101,11 @@ class TelegramTests(unittest.TestCase):
             config={"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}},
             token="token",
             update=update,
-            send_func=lambda token, chat_id, text: sent.append(text),
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
         )
 
-        self.assertEqual(sent, ["Server Performance\n\nCPU: 4.7% - جيد"])
+        self.assertEqual(sent[0], ("Server Performance\n\nCPU: 4.7% - جيد", None))
+        self.assertEqual(sent[1], (MENU_PROMPT, command_keyboard()))
 
     def test_handle_update_sends_short_report_for_report_command(self):
         conn = db.connect(":memory:")
@@ -128,13 +129,34 @@ class TelegramTests(unittest.TestCase):
             config={"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}},
             token="token",
             update=update,
-            send_func=lambda token, chat_id, text: sent.append((chat_id, text)),
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((chat_id, text, reply_markup)),
         )
 
         self.assertEqual(result["status"], "handled")
-        self.assertEqual(sent, [(456, "تقرير Matrix Scanner\nلا توجد مشاكل.")])
+        self.assertEqual(sent[0], (456, "تقرير Matrix Scanner\nلا توجد مشاكل.", None))
+        self.assertEqual(sent[1], (456, MENU_PROMPT, command_keyboard()))
 
-    def test_handle_update_supports_start_and_help(self):
+    def test_start_displays_menu_with_keyboard(self):
+        conn = db.connect(":memory:")
+        sent = []
+        update = {"message": {"text": "/start", "from": {"id": 123}, "chat": {"id": 456}}}
+
+        result = handle_update(
+            conn=conn,
+            registry={},
+            config={"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}},
+            token="token",
+            update=update,
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        self.assertEqual(result["status"], "handled")
+        self.assertEqual(result["tool_key"], "help")
+        self.assertIn("مرحبًا بك في Matrix Scanner", sent[0][0])
+        self.assertIn("/status - حالة السيرفر العامة", sent[0][0])
+        self.assertEqual(sent[0][1], command_keyboard())
+
+    def test_help_displays_menu_with_keyboard(self):
         conn = db.connect(":memory:")
         sent = []
         update = {"message": {"text": "/help", "from": {"id": 123}, "chat": {"id": 456}}}
@@ -145,13 +167,30 @@ class TelegramTests(unittest.TestCase):
             config={"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}},
             token="token",
             update=update,
-            send_func=lambda token, chat_id, text: sent.append(text),
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
         )
 
         self.assertEqual(result["status"], "handled")
-        self.assertEqual(result["tool_key"], "help")
-        self.assertIn("/status", sent[0])
-        self.assertIn("/report", sent[0])
+        self.assertIn("/report - تقرير كامل", sent[0][0])
+        self.assertEqual(sent[0][1], command_keyboard())
+
+    def test_unknown_command_sends_error_then_menu_without_unauthorized_leak(self):
+        conn = db.connect(":memory:")
+        sent = []
+        update = {"message": {"text": "/wat", "from": {"id": 123}, "chat": {"id": 456}}}
+
+        result = handle_update(
+            conn=conn,
+            registry={},
+            config={"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}},
+            token="token",
+            update=update,
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        self.assertEqual(result["status"], "ignored")
+        self.assertEqual(sent[0], ("الأمر غير معروف.", None))
+        self.assertEqual(sent[1], (MENU_PROMPT, command_keyboard()))
 
     def test_poll_once_updates_offset_and_dispatches(self):
         conn = db.connect(":memory:")
@@ -184,7 +223,7 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(next_offset, 11)
-        self.assertEqual(sent, ["ok"])
+        self.assertEqual(sent, ["ok", MENU_PROMPT])
 
     def test_run_long_polling_exits_when_stop_event_is_set(self):
         conn = db.connect(":memory:")
@@ -264,7 +303,7 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(next_offset, 11)
-        self.assertEqual(sent, ["ok"])
+        self.assertEqual(sent, ["ok", MENU_PROMPT])
 
         sent.clear()
         next_offset = poll_once(

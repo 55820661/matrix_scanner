@@ -23,7 +23,29 @@ COMMAND_TO_TOOL = {
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_OFFSET_KEY = "telegram.next_update_offset"
-HELP_TEXT = "الأوامر المتاحة: /status /performance /disk /services /nginx /laravel /report"
+MENU_PROMPT = "اختر أمرًا آخر:"
+HELP_TEXT = """مرحبًا بك في Matrix Scanner.
+
+الأوامر المتاحة:
+/status - حالة السيرفر العامة
+/performance - أداء السيرفر والخدمات
+/services - حالة الخدمات فقط
+/disk - مساحة التخزين
+/report - تقرير كامل
+/help - عرض القائمة"""
+
+
+def command_keyboard() -> dict[str, Any]:
+    return {
+        "keyboard": [
+            ["/status", "/report"],
+            ["/services", "/disk"],
+            ["/performance", "/help"],
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "is_persistent": True,
+    }
 
 
 def map_command(text: str) -> str | None:
@@ -31,9 +53,12 @@ def map_command(text: str) -> str | None:
     return COMMAND_TO_TOOL.get(command)
 
 
-def send_message(token: str, chat_id: int | str, text: str, timeout: int = 10) -> dict[str, Any]:
+def send_message(token: str, chat_id: int | str, text: str, timeout: int = 10, reply_markup: dict[str, Any] | None = None) -> dict[str, Any]:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+    data = urllib.parse.urlencode(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
@@ -85,10 +110,11 @@ def handle_update(
 
     tool_key = map_command(text)
     if _is_help_command(text):
-        send_func(token, chat_id, HELP_TEXT)
+        _send_with_keyboard(send_func, token, chat_id, HELP_TEXT)
         return {"status": "handled", "tool_key": "help", "chat_id": chat_id, "user_id": user_id}
     if tool_key is None:
-        send_func(token, chat_id, f"الأمر غير معروف. {HELP_TEXT}")
+        _send_plain(send_func, token, chat_id, "الأمر غير معروف.")
+        _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT)
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
@@ -102,7 +128,8 @@ def handle_update(
         input_data={"text": text, "chat_id": chat_id, "user_id": user_id},
     )
     response_text = format_tool_response(result)
-    send_func(token, chat_id, response_text)
+    _send_plain(send_func, token, chat_id, response_text)
+    _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT)
     return {"status": "handled", "tool_key": tool_key, "result_ok": bool(result.get("ok"))}
 
 
@@ -183,3 +210,14 @@ def save_next_update_offset(conn, offset: int) -> None:
 def _is_help_command(text: str) -> bool:
     command = text.strip().split()[0].lower() if text.strip() else ""
     return command in {"/start", "/help"}
+
+
+def _send_plain(send_func, token: str, chat_id: int | str, text: str) -> None:
+    send_func(token, chat_id, text)
+
+
+def _send_with_keyboard(send_func, token: str, chat_id: int | str, text: str) -> None:
+    try:
+        send_func(token, chat_id, text, reply_markup=command_keyboard())
+    except TypeError:
+        send_func(token, chat_id, text)
