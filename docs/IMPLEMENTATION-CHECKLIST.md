@@ -3,6 +3,7 @@
 ## Phase 0: Foundation + CLI
 - [x] Create Python package skeleton.
 - [x] Add CLI entry point.
+- [x] Add interactive setup command.
 - [x] Add `config.yaml.example`.
 - [x] Load non-secret config from file.
 - [x] Load secrets from environment.

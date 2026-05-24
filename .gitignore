@@ -8,3 +8,4 @@ venv/
 config.yaml
 data/
 .pytest_cache/
+tmp*/

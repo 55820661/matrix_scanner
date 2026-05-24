@@ -8,6 +8,7 @@ from pathlib import Path
 from matrix_scanner import db
 from matrix_scanner.config import load_config
 from matrix_scanner.scheduler import run_scan
+from matrix_scanner.setup import run_interactive_setup
 from matrix_scanner.telegram_bot import run_long_polling, send_message
 from matrix_scanner.tool_executor import execute_tool
 from matrix_scanner.tool_registry import build_registry
@@ -18,6 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="matrix-scanner")
     parser.add_argument("--config", default="config.yaml", help="Path to config file.")
     sub = parser.add_subparsers(dest="command", required=True)
+    setup = sub.add_parser("setup")
+    setup.add_argument("--force", action="store_true", help="Overwrite config file if it already exists.")
     sub.add_parser("init-db")
     sub.add_parser("scan")
     sub.add_parser("status")
@@ -31,6 +34,14 @@ def main(argv: list[str] | None = None) -> int:
     bot.add_argument("--once", action="store_true", help="Run one long-poll iteration and exit.")
 
     args = parser.parse_args(argv)
+    if args.command == "setup":
+        created = run_interactive_setup(Path(args.config), force=args.force)
+        if created:
+            print(f"Config written to {args.config}")
+            return 0
+        print("Config was not changed.")
+        return 1
+
     app_config = load_config(args.config if Path(args.config).exists() else None)
     conn = db.connect(app_config.database_path)
     registry = build_registry()

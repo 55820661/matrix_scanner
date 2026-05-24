@@ -18,6 +18,7 @@ This repository contains the initial scaffold:
 
 ## Quick Start
 ```bash
+python -m matrix_scanner.cli setup
 python -m matrix_scanner.cli --config config.memory.example.yaml status
 python -m matrix_scanner.cli --config config.memory.example.yaml performance
 python -m matrix_scanner.cli --config config.memory.example.yaml scan
