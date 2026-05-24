@@ -21,6 +21,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     setup = sub.add_parser("setup")
     setup.add_argument("--force", action="store_true", help="Overwrite config file if it already exists.")
+    setup.add_argument("--all-services", action="store_true", help="Show all systemd services instead of candidate application services.")
+    setup.add_argument("--include-inactive", action="store_true", help="Include inactive services in the setup list.")
     sub.add_parser("init-db")
     sub.add_parser("scan")
     sub.add_parser("status")
@@ -35,7 +37,16 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "setup":
-        created = run_interactive_setup(Path(args.config), force=args.force)
+        try:
+            created = run_interactive_setup(
+                Path(args.config),
+                force=args.force,
+                all_services=args.all_services,
+                include_inactive=args.include_inactive,
+            )
+        except KeyboardInterrupt:
+            print("\nSetup cancelled. No changes were made.")
+            return 130
         if created:
             print(f"Config written to {args.config}")
             return 0

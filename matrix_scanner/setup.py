@@ -18,6 +18,67 @@ class ServiceInfo:
     environment_file: str = ""
 
 
+EXCLUDED_SERVICE_PREFIXES = (
+    "systemd-",
+    "user@",
+    "user-runtime-dir@",
+    "getty",
+    "apt-",
+    "initrd-",
+    "modprobe@",
+    "e2scrub",
+    "keyboard-setup",
+    "console-setup",
+    "ifupdown-pre",
+)
+
+EXCLUDED_SERVICE_NAMES = {
+    "dpkg-db-backup",
+    "networking",
+    "dbus",
+    "cron",
+    "ssh",
+    "ufw",
+    "qemu-guest-agent",
+}
+
+IMPORTANT_SERVICE_NAMES = {
+    "nginx",
+    "apache2",
+    "httpd",
+    "mysql",
+    "mariadb",
+    "postgresql",
+    "redis",
+    "php-fpm",
+    "php8.3-fpm",
+    "php8.2-fpm",
+    "php8.1-fpm",
+    "supervisor",
+    "supervisord",
+    "docker",
+}
+
+APP_EXEC_TOKENS = (
+    "gunicorn",
+    "uvicorn",
+    "node",
+    "npm",
+    "yarn",
+    "pnpm",
+    "python",
+    "php-fpm",
+    "artisan",
+    "docker",
+    "docker-compose",
+    "java",
+    "dotnet",
+    "celery",
+    "rq",
+    "worker",
+)
+
+
 def discover_systemd_services(limit: int = 80) -> list[ServiceInfo]:
     systemctl = shutil.which("systemctl")
     if systemctl is None:
@@ -41,6 +102,37 @@ def discover_systemd_services(limit: int = 80) -> list[ServiceInfo]:
         services.append(ServiceInfo(name=_strip_service_suffix(name), description=description, active_state=active_state))
     services.sort(key=lambda item: (item.active_state != "active", item.name))
     return services[:limit]
+
+
+def filter_setup_services(
+    services: list[ServiceInfo],
+    *,
+    all_services: bool = False,
+    include_inactive: bool = False,
+) -> list[ServiceInfo]:
+    if all_services:
+        return services
+    filtered = services if include_inactive else [service for service in services if service.active_state in {"", "active"}]
+    return [service for service in filtered if is_candidate_application_service(service)]
+
+
+def is_candidate_application_service(service: ServiceInfo) -> bool:
+    name = service.name
+    if any(name.startswith(prefix) for prefix in EXCLUDED_SERVICE_PREFIXES):
+        return False
+    if name in EXCLUDED_SERVICE_NAMES:
+        return False
+    if name in IMPORTANT_SERVICE_NAMES:
+        return True
+    if service.working_directory:
+        return True
+    exec_start = service.exec_start.lower()
+    if any(token in exec_start for token in APP_EXEC_TOKENS):
+        return True
+    description = service.description.lower()
+    if any(token in description for token in ("application", "web server", "database", "queue", "worker")):
+        return True
+    return False
 
 
 def enrich_service_metadata(service: ServiceInfo) -> ServiceInfo:
@@ -179,14 +271,25 @@ def write_config(path: Path, content: str, *, force: bool = False, confirm: Call
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     Path("data").mkdir(exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_text(content, encoding="utf-8")
+    temp_path.replace(path)
     return True
 
 
-def run_interactive_setup(config_path: Path, *, force: bool = False) -> bool:
-    services = discover_systemd_services()
+def run_interactive_setup(
+    config_path: Path,
+    *,
+    force: bool = False,
+    all_services: bool = False,
+    include_inactive: bool = False,
+    input_func: Callable[[str], str] = input,
+) -> bool:
+    discovered = discover_systemd_services()
+    enriched_discovered = [enrich_service_metadata(service) for service in discovered]
+    services = filter_setup_services(enriched_discovered, all_services=all_services, include_inactive=include_inactive)
     if services:
-        print("Available systemd services:")
+        print("All systemd services:" if all_services else "Candidate application services:")
         for index, service in enumerate(services, start=1):
             suffix = f" - {service.description}" if service.description else ""
             state = f" [{service.active_state}]" if service.active_state else ""
@@ -194,21 +297,21 @@ def run_interactive_setup(config_path: Path, *, force: bool = False) -> bool:
     else:
         print("No systemd services discovered. You can still enter service names manually.")
 
-    selection = input("Select services to monitor (1,2,4 / all / none): ")
+    selection = input_func("Select services to monitor (1,2,4 / all / none): ")
     selected = parse_service_selection(selection, services)
-    manual = input("Additional service names, comma-separated (optional): ").strip()
+    manual = input_func("Additional service names, comma-separated (optional): ").strip()
     if manual:
         selected.extend(parse_service_selection(manual, []))
         selected = _dedupe(selected)
 
     enriched = [enrich_service_metadata(ServiceInfo(name=service)) for service in selected]
     suggested_app_path = _first_non_empty([service.working_directory for service in enriched], "/var/www/app")
-    app_path = input(f"Laravel app path [{suggested_app_path}]: ").strip() or suggested_app_path
-    app_log = input(f"Laravel log path [{app_path}/storage/logs/laravel.log]: ").strip() or f"{app_path}/storage/logs/laravel.log"
-    nginx_access = input("Nginx access log [/var/log/nginx/access.log]: ").strip() or "/var/log/nginx/access.log"
-    nginx_error = input("Nginx error log [/var/log/nginx/error.log]: ").strip() or "/var/log/nginx/error.log"
-    database_path = input("SQLite database path [data/matrix_scanner.sqlite3]: ").strip() or "data/matrix_scanner.sqlite3"
-    max_lines_text = input("Log max lines [500]: ").strip() or "500"
+    app_path = input_func(f"Laravel app path [{suggested_app_path}]: ").strip() or suggested_app_path
+    app_log = input_func(f"Laravel log path [{app_path}/storage/logs/laravel.log]: ").strip() or f"{app_path}/storage/logs/laravel.log"
+    nginx_access = input_func("Nginx access log [/var/log/nginx/access.log]: ").strip() or "/var/log/nginx/access.log"
+    nginx_error = input_func("Nginx error log [/var/log/nginx/error.log]: ").strip() or "/var/log/nginx/error.log"
+    database_path = input_func("SQLite database path [data/matrix_scanner.sqlite3]: ").strip() or "data/matrix_scanner.sqlite3"
+    max_lines_text = input_func("Log max lines [500]: ").strip() or "500"
     try:
         max_lines = int(max_lines_text)
     except ValueError:
