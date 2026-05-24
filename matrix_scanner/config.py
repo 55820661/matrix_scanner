@@ -128,14 +128,22 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
             continue
 
         if stripped.startswith("- "):
-            item = _parse_scalar(stripped[2:].strip())
+            item_text = stripped[2:].strip()
             if current_list_key is None and current_top_key:
                 if not isinstance(root.get(current_top_key), list):
                     root[current_top_key] = []
+                if ":" in item_text:
+                    item_key, _, item_value = item_text.partition(":")
+                    item = {item_key.strip(): _parse_scalar(item_value.strip())}
+                    root[current_top_key].append(item)
+                    current_map = item
+                    continue
+                item = _parse_scalar(item_text)
                 root[current_top_key].append(item)
                 continue
             if current_list_key is None:
                 continue
+            item = _parse_scalar(item_text)
             current_map.setdefault(current_list_key, []).append(item)
             continue
 
@@ -190,6 +198,12 @@ def _normalize_config(values: dict[str, Any]) -> None:
     if isinstance(telegram, dict):
         if isinstance(telegram.get("default_chat_id"), list):
             telegram["default_chat_id"] = None
+
+    applications = values.get("applications", [])
+    if not isinstance(applications, list):
+        values["applications"] = []
+    else:
+        values["applications"] = [app for app in applications if isinstance(app, dict)]
 
 
 def _blank_lists_to_empty_strings(values: dict[str, Any], keys: tuple[str, ...]) -> None:

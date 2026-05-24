@@ -82,7 +82,10 @@ def apache_5xx_summary(paths: list[str] | None = None, max_lines: int = 1000) ->
 
 def laravel_log_health(config: dict[str, Any]) -> dict[str, Any]:
     rows = []
-    for app in _application_paths(config):
+    apps = _application_paths(config)
+    if not apps:
+        return {"status": "ok", "rows": [], "message": "No Laravel applications configured.", "suggested_action": "أضف التطبيقات إلى applications أو laravel.path في config.yaml."}
+    for app in apps:
         log_dir = Path(app["path"]) / "storage" / "logs"
         logs = list(log_dir.glob("*.log")) if log_dir.exists() else []
         total_size = sum(path.stat().st_size for path in logs if path.exists())
@@ -104,7 +107,10 @@ def laravel_log_health(config: dict[str, Any]) -> dict[str, Any]:
 
 def laravel_env_sanity(config: dict[str, Any]) -> dict[str, Any]:
     rows = []
-    for app in _application_paths(config):
+    apps = _application_paths(config)
+    if not apps:
+        return {"status": "ok", "rows": [], "message": "No Laravel applications configured."}
+    for app in apps:
         env_path = Path(app["path"]) / ".env"
         values = _read_safe_env(env_path)
         issues = []
@@ -120,7 +126,10 @@ def laravel_env_sanity(config: dict[str, Any]) -> dict[str, Any]:
 
 def laravel_exception_summary(config: dict[str, Any], max_lines: int = 500) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
-    for log_path in _laravel_log_paths(config):
+    log_paths = _laravel_log_paths(config)
+    if not log_paths:
+        return {"status": "ok", "groups": [], "message": "No Laravel log paths configured."}
+    for log_path in log_paths:
         for line in _tail_lines(log_path, max_lines):
             item = classify_laravel_exception(line)
             if not item:
@@ -256,22 +265,45 @@ def _read_user_crontab() -> list[str]:
 
 
 def _application_paths(config: dict[str, Any]) -> list[dict[str, str]]:
-    apps = [{"service_name": str(app.get("service_name", "")), "path": str(app.get("path", ""))} for app in config.get("applications", []) if app.get("path")]
+    apps = []
+    applications = config.get("applications", [])
+    if isinstance(applications, list):
+        for app in applications:
+            if not isinstance(app, dict):
+                continue
+            path = app.get("path")
+            if path:
+                apps.append({"service_name": str(app.get("service_name", "")), "path": str(path)})
     laravel = config.get("laravel", {})
     if isinstance(laravel, dict) and laravel.get("path"):
         apps.append({"service_name": "laravel", "path": str(laravel["path"])})
-    return apps
+    return _dedupe_apps(apps)
 
 
 def _laravel_log_paths(config: dict[str, Any]) -> list[str]:
     paths = []
     laravel = config.get("laravel", {})
     if isinstance(laravel, dict) and laravel.get("log_path"):
-        paths.append(str(laravel["log_path"]))
+        log_path = Path(str(laravel["log_path"]))
+        if log_path.is_dir():
+            paths.extend(str(path) for path in log_path.glob("*.log") if path.exists())
+        else:
+            paths.append(str(log_path))
     for app in _application_paths(config):
         log_dir = Path(app["path"]) / "storage" / "logs"
         paths.extend(str(path) for path in log_dir.glob("*.log") if path.exists())
-    return paths
+    return list(dict.fromkeys(paths))
+
+
+def _dedupe_apps(apps: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen = set()
+    result = []
+    for app in apps:
+        if app["path"] in seen:
+            continue
+        seen.add(app["path"])
+        result.append(app)
+    return result
 
 
 def _read_safe_env(path: Path) -> dict[str, str]:

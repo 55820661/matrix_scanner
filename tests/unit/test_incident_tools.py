@@ -31,6 +31,21 @@ class IncidentToolsTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["env_exists"], False)
         self.assertEqual(result["rows"][0]["values"], {})
 
+    def test_application_paths_ignores_non_dict_entries(self):
+        result = incident._application_paths({"applications": ["[]", [], {"path": "/app", "service_name": "app"}]})
+
+        self.assertEqual(result, [{"service_name": "app", "path": "/app"}])
+
+    def test_laravel_log_health_handles_empty_applications(self):
+        result = incident.laravel_log_health({"applications": []})
+
+        self.assertEqual(result["message"], "No Laravel applications configured.")
+
+    def test_laravel_log_health_uses_laravel_path_fallback(self):
+        result = incident.laravel_log_health({"applications": ["[]"], "laravel": {"path": "missing-laravel"}})
+
+        self.assertEqual(result["rows"][0]["path"], "missing-laravel")
+
     def test_laravel_env_sanity_does_not_print_secrets(self):
         with patch("matrix_scanner.scanners.incident._application_paths", return_value=[{"path": "/app"}]):
             with patch("matrix_scanner.scanners.incident._read_lines", return_value=["APP_ENV=production", "APP_DEBUG=false", "DB_PASSWORD=secret", "API_KEY=abc"]):

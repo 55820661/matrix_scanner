@@ -24,12 +24,14 @@ def apache_5xx_summary(context: dict) -> dict:
 
 def laravel_log_health(context: dict) -> dict:
     result = incident.laravel_log_health(context["config"])
-    return _with_summary("Laravel Log Health", result, _rows(result.get("rows", []), ["path", "log_count", "total_size_bytes", "largest_size_bytes", "uses_daily_logs"]))
+    return _with_summary("Laravel Log Health", result, result.get("message") or _rows(result.get("rows", []), ["path", "log_count", "total_size_bytes", "largest_size_bytes", "uses_daily_logs"]))
 
 
 def laravel_env_sanity(context: dict) -> dict:
     result = incident.laravel_env_sanity(context["config"])
     lines = ["Laravel Env Sanity"]
+    if result.get("message"):
+        lines.append(result["message"])
     for row in result.get("rows", []):
         values = ", ".join(f"{key}={value}" for key, value in row.get("values", {}).items())
         lines.append(f"- {row['path']}: {row['evaluation']} ({values or 'no safe env values'})")
@@ -40,7 +42,7 @@ def laravel_env_sanity(context: dict) -> dict:
 
 def laravel_exception_summary(context: dict) -> dict:
     result = incident.laravel_exception_summary(context["config"], int(context["config"].get("logs", {}).get("max_lines", 500)))
-    return _with_summary("Laravel Exception Summary", result, _exceptions(result.get("groups", [])))
+    return _with_summary("Laravel Exception Summary", result, result.get("message") or _exceptions(result.get("groups", [])))
 
 
 def queue_workers_summary(context: dict) -> dict:

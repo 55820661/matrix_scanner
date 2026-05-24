@@ -50,6 +50,29 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.values["mysql"]["timeout_seconds"], 5)
         self.assertIsNone(config.values["telegram"]["default_chat_id"])
 
+    def test_load_config_normalizes_invalid_applications_items(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as handle:
+            handle.write("applications:\n  []\n")
+            config_path = handle.name
+        self.addCleanup(lambda: os.path.exists(config_path) and os.unlink(config_path))
+
+        config = load_config(config_path)
+
+        self.assertEqual(config.values["applications"], [])
+
+    def test_load_config_parses_applications_list_of_maps(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as handle:
+            handle.write("applications:\n  - service_name: app\n    path: /home/app/public_html\n    type: laravel\n    log_path: /home/app/public_html/storage/logs\n")
+            config_path = handle.name
+        self.addCleanup(lambda: os.path.exists(config_path) and os.unlink(config_path))
+
+        config = load_config(config_path)
+
+        self.assertEqual(
+            config.values["applications"],
+            [{"service_name": "app", "path": "/home/app/public_html", "type": "laravel", "log_path": "/home/app/public_html/storage/logs"}],
+        )
+
     @staticmethod
     def _restore_env(key, value):
         if value is None:

@@ -233,9 +233,9 @@ def build_config_yaml(
         "telegram_enabled: false",
         "confirmation_timeout_seconds: 120",
         "",
-        "applications:",
     ]
     if applications:
+        lines.append("applications:")
         for app in applications:
             lines.extend(
                 [
@@ -246,7 +246,7 @@ def build_config_yaml(
                 ]
             )
     else:
-        lines.append("  []")
+        lines.append("applications: []")
     lines.extend(
         [
             "",
@@ -332,7 +332,26 @@ def detect_applications(services: list[ServiceInfo]) -> list[ApplicationInfo]:
         app_type = detect_application_type(service, Path(path))
         log_path = detect_application_log_path(app_type, Path(path))
         applications.append(ApplicationInfo(service_name=service.name, path=path, type=app_type, log_path=log_path))
-    return applications
+    return _dedupe_applications(applications + discover_cpanel_laravel_apps())
+
+
+def discover_cpanel_laravel_apps(base: str = "/home") -> list[ApplicationInfo]:
+    home = Path(base)
+    if not home.exists():
+        return []
+    candidates = []
+    for pattern in ("*/public_html", "*/public_html/*"):
+        candidates.extend(home.glob(pattern))
+    applications = []
+    for path in candidates:
+        if is_laravel_app_path(path):
+            service_name = f"detected-{path.parts[2] if len(path.parts) > 2 else path.name}-{path.name}".replace("_", "-")
+            applications.append(ApplicationInfo(service_name=service_name, path=str(path), type="laravel", log_path=detect_application_log_path("laravel", path)))
+    return _dedupe_applications(applications)
+
+
+def is_laravel_app_path(path: Path) -> bool:
+    return (path / "artisan").exists() and (path / ".env").exists() and (path / "storage" / "logs").exists()
 
 
 def detect_application_type(service: ServiceInfo, app_path: Path) -> str:
@@ -349,8 +368,11 @@ def detect_application_type(service: ServiceInfo, app_path: Path) -> str:
 def detect_application_log_path(app_type: str, app_path: Path) -> str:
     if app_type != "laravel":
         return ""
-    laravel_log = app_path / "storage" / "logs" / "laravel.log"
-    return str(laravel_log) if laravel_log.exists() else ""
+    log_dir = app_path / "storage" / "logs"
+    if not log_dir.exists():
+        return ""
+    laravel_log = log_dir / "laravel.log"
+    return str(laravel_log) if laravel_log.exists() else str(log_dir)
 
 
 def run_interactive_setup(
@@ -404,4 +426,15 @@ def _dedupe(values: list[str]) -> list[str]:
         if value and value not in seen:
             seen.add(value)
             result.append(value)
+    return result
+
+
+def _dedupe_applications(applications: list[ApplicationInfo]) -> list[ApplicationInfo]:
+    seen = set()
+    result = []
+    for app in applications:
+        if app.path in seen:
+            continue
+        seen.add(app.path)
+        result.append(app)
     return result

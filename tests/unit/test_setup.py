@@ -54,6 +54,8 @@ class SetupTests(unittest.TestCase):
         )
 
         self.assertIn("services:\n  - nginx\n  - mysql", content)
+        self.assertIn("applications: []", content)
+        self.assertNotIn("applications:\n  []", content)
         self.assertIn("database_path: data/matrix_scanner.sqlite3", content)
         self.assertNotIn("TELEGRAM_BOT_TOKEN", content)
 
@@ -217,6 +219,21 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(applications[0].type, "laravel")
         self.assertTrue(applications[0].log_path.endswith("storage\\logs\\laravel.log") or applications[0].log_path.endswith("storage/logs/laravel.log"))
         self.assertEqual(applications[1].log_path, "")
+
+    def test_cpanel_laravel_app_detection(self):
+        from matrix_scanner.setup import discover_cpanel_laravel_apps
+
+        app = Path("/home/innvi/public_html")
+
+        with mock.patch("matrix_scanner.setup.Path.exists", return_value=True):
+            with mock.patch("matrix_scanner.setup.Path.glob", return_value=[app]):
+                applications = discover_cpanel_laravel_apps("/home")
+
+        self.assertEqual(len(applications), 1)
+        self.assertEqual(applications[0].path, str(app))
+        self.assertEqual(applications[0].type, "laravel")
+        self.assertIn("storage", applications[0].log_path)
+        self.assertIn("logs", applications[0].log_path)
 
     def test_gunicorn_service_is_not_classified_as_laravel(self):
         services = [ServiceInfo("django-app", working_directory="/opt/django", exec_start="/venv/bin/gunicorn project.wsgi")]
