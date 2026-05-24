@@ -20,7 +20,22 @@ def get_laravel_errors(context: dict) -> dict:
 def _summarize_errors(result: dict) -> str:
     if result.get("status") != "ok":
         return f"غير متاح: {result.get('reason', 'unknown')}"
-    errors = result.get("recent_errors", [])
-    if not errors:
+    groups = result.get("groups", [])
+    if not groups:
         return "لا توجد أخطاء حديثة ضمن العينة الحالية."
-    return "\n".join(errors[-5:])
+    lines = ["Nginx error summary"]
+    for group in groups[:5]:
+        lines.extend(
+            [
+                "",
+                f"- {group['title']}",
+                f"  التكرار: {group['count']}",
+                f"  التقييم: {group['evaluation']}",
+                f"  آخر ظهور: {group.get('last_seen') or 'غير متاح'}",
+                f"  أهم IPs: {', '.join(group.get('ips', [])) or 'غير متاح'}",
+                f"  المسارات: {', '.join(group.get('paths', [])) or 'غير متاح'}",
+                f"  الشرح: {group['explanation']}",
+                f"  الإجراء المقترح: {group['suggested_action']}",
+            ]
+        )
+    return "\n".join(lines)

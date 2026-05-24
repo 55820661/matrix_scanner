@@ -1,7 +1,14 @@
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from threading import Event
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from matrix_scanner import db
+from matrix_scanner.cli import _telegram_bot
 from matrix_scanner.telegram_bot import format_tool_response, handle_update, is_update_allowed, map_command, poll_once
+from matrix_scanner.telegram_bot import run_long_polling
 from matrix_scanner.tool_registry import ToolSpec
 
 
@@ -178,6 +185,52 @@ class TelegramTests(unittest.TestCase):
 
         self.assertEqual(next_offset, 11)
         self.assertEqual(sent, ["ok"])
+
+    def test_run_long_polling_exits_when_stop_event_is_set(self):
+        conn = db.connect(":memory:")
+        stop_event = Event()
+        stop_event.set()
+
+        run_long_polling(
+            conn=conn,
+            registry={},
+            config={"telegram": {"poll_sleep_seconds": 0}},
+            token="token",
+            stop_event=stop_event,
+            get_updates_func=lambda *args, **kwargs: self.fail("get_updates should not run after stop"),
+        )
+
+    def test_run_long_polling_once_still_runs_one_iteration(self):
+        conn = db.connect(":memory:")
+        calls = []
+
+        def fake_updates(token, offset=None, timeout=30):
+            calls.append(offset)
+            return {"ok": True, "result": []}
+
+        run_long_polling(
+            conn=conn,
+            registry={},
+            config={"telegram": {"poll_sleep_seconds": 0, "poll_timeout_seconds": 1}},
+            token="token",
+            stop_after=1,
+            get_updates_func=fake_updates,
+        )
+
+        self.assertEqual(calls, [None])
+
+    def test_telegram_bot_keyboard_interrupt_stops_without_traceback(self):
+        app_config = SimpleNamespace(telegram_bot_token="token", values={})
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch("matrix_scanner.cli.run_long_polling", side_effect=KeyboardInterrupt), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = _telegram_bot(app_config, db.connect(":memory:"), {})
+
+        self.assertEqual(code, 130)
+        self.assertIn("Telegram bot stopped.", stdout.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_poll_once_does_not_repeat_same_update(self):
         conn = db.connect(":memory:")

@@ -4,6 +4,7 @@ import json
 import time
 import urllib.parse
 import urllib.request
+from threading import Event
 from typing import Any
 
 from matrix_scanner import db
@@ -146,12 +147,13 @@ def run_long_polling(
     config: dict[str, Any],
     token: str,
     stop_after: int | None = None,
+    stop_event: Event | None = None,
     send_func=send_message,
     get_updates_func=get_updates,
 ) -> None:
     offset = load_next_update_offset(conn)
     iterations = 0
-    while True:
+    while not (stop_event and stop_event.is_set()):
         offset = poll_once(
             conn=conn,
             registry=registry,
@@ -163,6 +165,8 @@ def run_long_polling(
         )
         iterations += 1
         if stop_after is not None and iterations >= stop_after:
+            return
+        if stop_event and stop_event.is_set():
             return
         time.sleep(float(config.get("telegram", {}).get("poll_sleep_seconds", 1)))
 

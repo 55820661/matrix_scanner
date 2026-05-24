@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
+import threading
 from pathlib import Path
 
 from matrix_scanner import db
@@ -109,8 +111,30 @@ def _telegram_bot(app_config, conn, registry, stop_after: int | None = None) -> 
     if not token:
         print("TELEGRAM_BOT_TOKEN is not set.", file=sys.stderr)
         return 1
-    run_long_polling(conn=conn, registry=registry, config=app_config.values, token=token, stop_after=stop_after)
-    return 0
+    stop_event = threading.Event()
+    previous_sigterm = _install_sigterm_handler(stop_event)
+    try:
+        run_long_polling(conn=conn, registry=registry, config=app_config.values, token=token, stop_after=stop_after, stop_event=stop_event)
+        return 0
+    except KeyboardInterrupt:
+        print("\nTelegram bot stopped.")
+        return 130
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+
+
+def _install_sigterm_handler(stop_event: threading.Event):
+    if not hasattr(signal, "SIGTERM"):
+        return None
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def _handler(signum, frame):
+        stop_event.set()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _handler)
+    return previous
 
 
 def _configure_output_encoding() -> None:
