@@ -9,6 +9,7 @@ def server_performance(context: dict) -> dict:
     performance = build_server_performance(scan, context["config"])
     return {
         "summary_text": performance["summary_text"],
+        "telegram_text": performance["telegram_text"],
         "rows": performance["rows"],
         "service_rows": performance["service_rows"],
         "summary": performance["summary"],

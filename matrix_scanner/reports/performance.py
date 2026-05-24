@@ -26,7 +26,13 @@ def build_server_performance(scan: dict[str, Any], config: dict[str, Any] | None
     ]
     service_rows = build_service_rows(scan.get("services", {}), config.get("services", []))
     summary = _summary(metric_rows, service_rows, bool(config.get("services", [])))
-    return {"rows": metric_rows, "service_rows": service_rows, "summary": summary, "summary_text": format_performance_table(metric_rows, service_rows, summary)}
+    return {
+        "rows": metric_rows,
+        "service_rows": service_rows,
+        "summary": summary,
+        "summary_text": format_performance_table(metric_rows, service_rows, summary),
+        "telegram_text": format_performance_telegram(metric_rows, service_rows, summary),
+    }
 
 
 def build_service_rows(scanned_services: dict[str, Any], configured_services: list[str]) -> list[dict[str, str]]:
@@ -53,6 +59,26 @@ def format_performance_table(metric_rows: list[dict[str, str]], service_rows: li
     if include_summary:
         lines.extend(["", f"الخلاصة: {summary}"])
     return "\n".join(lines)
+
+
+def format_performance_telegram(metric_rows: list[dict[str, str]], service_rows: list[dict[str, str]], summary: str) -> str:
+    lines = ["Server Performance", ""]
+    lines.extend(f"{row['metric']}: {row['value']} - {row['status']}" for row in metric_rows)
+    lines.extend(["", "Services", ""])
+    if service_rows:
+        lines.extend(f"{_service_icon(row['evaluation'])} {row['service']}: {row['status']}" for row in service_rows)
+    else:
+        lines.append("No services configured.")
+    lines.extend(["", f"الخلاصة: {summary}"])
+    return "\n".join(lines)
+
+
+def _service_icon(evaluation: str) -> str:
+    if evaluation == "يعمل":
+        return "✅"
+    if evaluation == "تحذير":
+        return "⚠️"
+    return "ℹ️"
 
 
 def _metric_row(metric: str, value: str, status: str) -> dict[str, str]:

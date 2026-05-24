@@ -107,8 +107,9 @@ class ReportToolTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "handled")
         self.assertIn("تقرير Matrix Scanner", sent[0])
-        self.assertIn("| Service | Status | Evaluation |", sent[0])
-        self.assertIn("| service-1 | running | يعمل |", sent[0])
+        self.assertIn("Services", sent[0])
+        self.assertIn("✅ service-1: running", sent[0])
+        self.assertNotIn("| Service | Status | Evaluation |", sent[0])
 
 
 if __name__ == "__main__":

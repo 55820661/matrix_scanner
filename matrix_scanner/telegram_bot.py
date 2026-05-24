@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from matrix_scanner import db
 from matrix_scanner.security import Principal, is_telegram_allowed, truncate_text
 from matrix_scanner.tool_executor import execute_tool
 
@@ -20,6 +21,8 @@ COMMAND_TO_TOOL = {
 }
 
 TELEGRAM_MESSAGE_LIMIT = 4096
+TELEGRAM_OFFSET_KEY = "telegram.next_update_offset"
+HELP_TEXT = "الأوامر المتاحة: /status /performance /disk /services /nginx /laravel /report"
 
 
 def map_command(text: str) -> str | None:
@@ -80,8 +83,11 @@ def handle_update(
         return {"status": "denied", "reason": "unauthorized", "chat_id": chat_id, "user_id": user_id}
 
     tool_key = map_command(text)
+    if _is_help_command(text):
+        send_func(token, chat_id, HELP_TEXT)
+        return {"status": "handled", "tool_key": "help", "chat_id": chat_id, "user_id": user_id}
     if tool_key is None:
-        send_func(token, chat_id, "الأمر غير معروف. الأوامر المتاحة: /status /performance /disk /services /nginx /laravel /report")
+        send_func(token, chat_id, f"الأمر غير معروف. {HELP_TEXT}")
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
@@ -103,7 +109,7 @@ def format_tool_response(result: dict[str, Any]) -> str:
     if not result.get("ok"):
         return f"تعذر تنفيذ الطلب: {result.get('error', 'unknown_error')}"
     output = result.get("output", {})
-    text = output.get("summary_text") or output.get("report_text") or json.dumps(output, ensure_ascii=False, indent=2)
+    text = output.get("telegram_text") or output.get("summary_text") or output.get("report_text") or json.dumps(output, ensure_ascii=False, indent=2)
     return truncate_text(text, TELEGRAM_MESSAGE_LIMIT)
 
 
@@ -117,15 +123,19 @@ def poll_once(
     send_func=send_message,
     get_updates_func=get_updates,
 ) -> int | None:
-    response = get_updates_func(token, offset=offset, timeout=int(config.get("telegram", {}).get("poll_timeout_seconds", 30)))
+    current_offset = offset if offset is not None else load_next_update_offset(conn)
+    response = get_updates_func(token, offset=current_offset, timeout=int(config.get("telegram", {}).get("poll_timeout_seconds", 30)))
     if not response.get("ok"):
-        return offset
-    next_offset = offset
+        return current_offset
+    next_offset = current_offset
     for update in response.get("result", []):
         update_id = update.get("update_id")
+        if update_id is not None and next_offset is not None and int(update_id) < int(next_offset):
+            continue
+        handle_update(conn=conn, registry=registry, config=config, token=token, update=update, send_func=send_func)
         if update_id is not None:
             next_offset = int(update_id) + 1
-        handle_update(conn=conn, registry=registry, config=config, token=token, update=update, send_func=send_func)
+            save_next_update_offset(conn, next_offset)
     return next_offset
 
 
@@ -139,7 +149,7 @@ def run_long_polling(
     send_func=send_message,
     get_updates_func=get_updates,
 ) -> None:
-    offset = None
+    offset = load_next_update_offset(conn)
     iterations = 0
     while True:
         offset = poll_once(
@@ -155,3 +165,17 @@ def run_long_polling(
         if stop_after is not None and iterations >= stop_after:
             return
         time.sleep(float(config.get("telegram", {}).get("poll_sleep_seconds", 1)))
+
+
+def load_next_update_offset(conn) -> int | None:
+    value = db.get_setting(conn, TELEGRAM_OFFSET_KEY)
+    return int(value) if value is not None else None
+
+
+def save_next_update_offset(conn, offset: int) -> None:
+    db.set_setting(conn, TELEGRAM_OFFSET_KEY, int(offset))
+
+
+def _is_help_command(text: str) -> bool:
+    command = text.strip().split()[0].lower() if text.strip() else ""
+    return command in {"/start", "/help"}

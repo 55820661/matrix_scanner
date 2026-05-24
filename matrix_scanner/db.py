@@ -235,3 +235,24 @@ def log_invocation(
         ),
     )
     conn.commit()
+
+
+def get_setting(conn: sqlite3.Connection, key: str, default: Any = None) -> Any:
+    row = conn.execute("SELECT value_json FROM settings WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return default
+    return json.loads(row["value_json"])
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
+    conn.execute(
+        """
+        INSERT INTO settings(key, value_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json=excluded.value_json,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (key, json.dumps(value, ensure_ascii=False)),
+    )
+    conn.commit()

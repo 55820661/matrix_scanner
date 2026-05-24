@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from matrix_scanner.reports.performance import build_server_performance, format_performance_table
+from matrix_scanner.reports.performance import build_server_performance, format_performance_table, format_performance_telegram
 
 
 def status_summary(scan: dict[str, Any]) -> str:
@@ -37,6 +37,31 @@ def full_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = None
         f"الحالة العامة: {_overall_status(performance, alerts)}",
         "",
         performance_text,
+        "",
+        "المشاكل المكتشفة:",
+    ]
+    if not alerts:
+        lines.append("- لا توجد مشاكل حسب القواعد الحالية.")
+    for alert in alerts:
+        lines.extend([
+            f"- [{alert['severity']}] {alert['title']}",
+            f"  الدليل: {_short_evidence(alert.get('evidence', {}))}",
+            f"  السبب المرجح: {alert.get('probable_cause', '-')}",
+            f"  الإجراء المقترح: {alert.get('suggested_action', '-')}",
+        ])
+    lines.extend(["", "الخلاصة:", performance["summary"]])
+    return "\n".join(lines)
+
+
+def telegram_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = None, config: dict[str, Any] | None = None) -> str:
+    alerts = alerts or []
+    performance = build_server_performance(scan, config or {})
+    lines = [
+        "تقرير Matrix Scanner",
+        "",
+        f"الحالة العامة: {_overall_status(performance, alerts)}",
+        "",
+        format_performance_telegram(performance["rows"], performance["service_rows"], performance["summary"]),
         "",
         "المشاكل المكتشفة:",
     ]
