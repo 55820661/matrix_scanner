@@ -24,28 +24,39 @@ COMMAND_TO_TOOL = {
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_OFFSET_KEY = "telegram.next_update_offset"
 MENU_PROMPT = "اختر أمرًا آخر:"
-HELP_TEXT = """مرحبًا بك في Matrix Scanner.
+COMMAND_DESCRIPTIONS = {
+    "/status": "حالة السيرفر العامة",
+    "/performance": "أداء السيرفر والخدمات",
+    "/services": "حالة الخدمات فقط",
+    "/disk": "مساحة التخزين",
+    "/nginx": "ملخص Nginx",
+    "/laravel": "ملخص Laravel إن كان مفعّلًا",
+    "/report": "تقرير كامل",
+    "/help": "عرض القائمة",
+}
+COMMAND_ORDER = ["/status", "/report", "/performance", "/services", "/disk", "/nginx", "/laravel", "/help"]
 
-الأوامر المتاحة:
-/status - حالة السيرفر العامة
-/performance - أداء السيرفر والخدمات
-/services - حالة الخدمات فقط
-/disk - مساحة التخزين
-/report - تقرير كامل
-/help - عرض القائمة"""
+
+def build_help_text(registry: dict[str, Any], config: dict[str, Any]) -> str:
+    lines = ["مرحبًا بك في Matrix Scanner.", "", "الأوامر المتاحة:"]
+    lines.extend(f"{command} - {COMMAND_DESCRIPTIONS.get(command, 'أمر متاح')}" for command in available_commands(registry, config))
+    return "\n".join(lines)
 
 
-def command_keyboard() -> dict[str, Any]:
+def command_keyboard(registry: dict[str, Any] | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    commands = available_commands(registry or {}, config or {})
     return {
-        "keyboard": [
-            ["/status", "/report"],
-            ["/services", "/disk"],
-            ["/performance", "/help"],
-        ],
+        "keyboard": [commands[index:index + 2] for index in range(0, len(commands), 2)],
         "resize_keyboard": True,
         "one_time_keyboard": False,
         "is_persistent": True,
     }
+
+
+def available_commands(registry: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    commands = [command for command in COMMAND_ORDER if command == "/help" or command in COMMAND_TO_TOOL]
+    extras = sorted(command for command in COMMAND_TO_TOOL if command not in commands)
+    return [command for command in commands + extras if _is_command_visible(command, registry, config)]
 
 
 def map_command(text: str) -> str | None:
@@ -110,11 +121,11 @@ def handle_update(
 
     tool_key = map_command(text)
     if _is_help_command(text):
-        _send_with_keyboard(send_func, token, chat_id, HELP_TEXT)
+        _send_with_keyboard(send_func, token, chat_id, build_help_text(registry, config), registry, config)
         return {"status": "handled", "tool_key": "help", "chat_id": chat_id, "user_id": user_id}
     if tool_key is None:
         _send_plain(send_func, token, chat_id, "الأمر غير معروف.")
-        _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT)
+        _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT, registry, config)
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
@@ -129,7 +140,7 @@ def handle_update(
     )
     response_text = format_tool_response(result)
     _send_plain(send_func, token, chat_id, response_text)
-    _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT)
+    _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT, registry, config)
     return {"status": "handled", "tool_key": tool_key, "result_ok": bool(result.get("ok"))}
 
 
@@ -216,8 +227,29 @@ def _send_plain(send_func, token: str, chat_id: int | str, text: str) -> None:
     send_func(token, chat_id, text)
 
 
-def _send_with_keyboard(send_func, token: str, chat_id: int | str, text: str) -> None:
+def _send_with_keyboard(send_func, token: str, chat_id: int | str, text: str, registry: dict[str, Any], config: dict[str, Any]) -> None:
     try:
-        send_func(token, chat_id, text, reply_markup=command_keyboard())
+        send_func(token, chat_id, text, reply_markup=command_keyboard(registry, config))
     except TypeError:
         send_func(token, chat_id, text)
+
+
+def _is_command_visible(command: str, registry: dict[str, Any], config: dict[str, Any]) -> bool:
+    if command == "/help":
+        return True
+    tool_key = COMMAND_TO_TOOL.get(command)
+    if not tool_key:
+        return False
+    spec = registry.get(tool_key)
+    if spec is None:
+        return False
+    if not spec.enabled:
+        return False
+    if spec.type == "action" and not bool(config.get("approved_fix", False)):
+        return False
+    if spec.requires_confirmation and not bool(config.get("approved_fix", False)):
+        return False
+    current_mode = str(config.get("current_mode", "read_only"))
+    if current_mode not in spec.allowed_modes:
+        return False
+    return True
