@@ -1,6 +1,6 @@
 import os
-import tempfile
 import unittest
+import tempfile
 
 from matrix_scanner.config import load_config
 
@@ -29,6 +29,26 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.get("logs", {}), config.values["logs"])
         self.assertEqual(config["logs"], config.values["logs"])
         self.assertIn("logs", config)
+
+    def test_load_config_normalizes_blank_scalar_lists(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                "logs:\n  nginx_access:\n  nginx_error:\n  max_lines:\nlaravel:\n  path:\n  log_path:\nmysql:\n  cli_path:\n  defaults_file:\n  timeout_seconds:\ntelegram:\n  default_chat_id:\n",
+            )
+            config_path = handle.name
+        self.addCleanup(lambda: os.path.exists(config_path) and os.unlink(config_path))
+
+        config = load_config(config_path)
+
+        self.assertEqual(config.values["logs"]["nginx_access"], "")
+        self.assertEqual(config.values["logs"]["nginx_error"], "")
+        self.assertEqual(config.values["logs"]["max_lines"], 500)
+        self.assertEqual(config.values["laravel"]["path"], "")
+        self.assertEqual(config.values["laravel"]["log_path"], "")
+        self.assertEqual(config.values["mysql"]["cli_path"], "")
+        self.assertEqual(config.values["mysql"]["defaults_file"], "")
+        self.assertEqual(config.values["mysql"]["timeout_seconds"], 5)
+        self.assertIsNone(config.values["telegram"]["default_chat_id"])
 
     @staticmethod
     def _restore_env(key, value):

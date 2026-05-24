@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+from typing import Any
 import re
 
 from matrix_scanner.security import redact
@@ -178,7 +179,9 @@ def _extract_request_path(line: str) -> str:
     return match.group(1) if match else ""
 
 
-def _tail_lines(path: str, max_lines: int) -> list[str] | dict:
+def _tail_lines(path: Any, max_lines: int) -> list[str] | dict:
+    if not isinstance(path, (str, bytes)) or not str(path).strip():
+        return {"status": "unavailable", "reason": "invalid_or_empty_path", "path": ""}
     log_path = Path(path)
     if not log_path.exists():
         return {"status": "unavailable", "reason": "file_not_found", "path": path}

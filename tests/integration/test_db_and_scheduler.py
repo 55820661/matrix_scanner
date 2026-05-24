@@ -73,6 +73,20 @@ class DbAndSchedulerTests(unittest.TestCase):
 
         self.assertEqual(result["laravel"], {"enabled": False, "reason": "No Laravel log path configured"})
 
+    def test_collect_scan_with_nginx_log_paths_as_lists_does_not_fail(self):
+        config = {
+            "services": [],
+            "logs": {"nginx_access": [], "nginx_error": [], "max_lines": []},
+            "laravel": {"path": "", "log_path": ""},
+            "php_fpm": {"service_name": "php-fpm", "pool_config_paths": []},
+            "mysql": {"service_name": "mysql", "timeout_seconds": []},
+        }
+
+        result = collect_scan(config)
+
+        self.assertEqual(result["nginx"]["access"]["reason"], "invalid_or_empty_path")
+        self.assertEqual(result["nginx"]["errors"]["reason"], "invalid_or_empty_path")
+
     def test_collect_scan_applications_only_config_does_not_fail(self):
         config = {
             "services": [],

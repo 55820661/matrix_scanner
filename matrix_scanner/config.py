@@ -66,6 +66,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         if config_path.exists():
             loaded = _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
             _deep_update(values, loaded)
+    _normalize_config(values)
 
     return AppConfig(
         values=values,
@@ -167,3 +168,38 @@ def _parse_scalar(value: str) -> Any:
         return int(value)
     except ValueError:
         return value.strip('"').strip("'")
+
+
+def _normalize_config(values: dict[str, Any]) -> None:
+    logs = values.get("logs", {})
+    if isinstance(logs, dict):
+        _blank_lists_to_empty_strings(logs, ("nginx_access", "nginx_error"))
+        if not isinstance(logs.get("max_lines"), int):
+            logs["max_lines"] = _safe_int(logs.get("max_lines"), 500)
+
+    laravel = values.get("laravel", {})
+    if isinstance(laravel, dict):
+        _blank_lists_to_empty_strings(laravel, ("path", "log_path"))
+
+    mysql = values.get("mysql", {})
+    if isinstance(mysql, dict):
+        _blank_lists_to_empty_strings(mysql, ("cli_path", "defaults_file"))
+        mysql["timeout_seconds"] = _safe_int(mysql.get("timeout_seconds"), 5)
+
+    telegram = values.get("telegram", {})
+    if isinstance(telegram, dict):
+        if isinstance(telegram.get("default_chat_id"), list):
+            telegram["default_chat_id"] = None
+
+
+def _blank_lists_to_empty_strings(values: dict[str, Any], keys: tuple[str, ...]) -> None:
+    for key in keys:
+        if isinstance(values.get(key), list):
+            values[key] = ""
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

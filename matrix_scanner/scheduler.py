@@ -45,17 +45,17 @@ def collect_scan(config: dict[str, Any]) -> dict[str, Any]:
     laravel = config.get("laravel", {})
     php_fpm = config.get("php_fpm", {})
     mysql = config.get("mysql", {})
-    max_lines = int(logs.get("max_lines", 500))
+    max_lines = as_int(logs.get("max_lines", 500), 500)
     return {
         "system": scan_system(),
         "services": scan_services(config.get("services", [])),
-        "nginx": scan_nginx(logs.get("nginx_access", ""), logs.get("nginx_error", ""), max_lines),
+        "nginx": scan_nginx(as_non_empty_str(logs.get("nginx_access")), as_non_empty_str(logs.get("nginx_error")), max_lines),
         "php_fpm": scan_php_fpm(php_fpm.get("service_name", "php-fpm"), php_fpm.get("pool_config_paths", [])),
         "mysql": scan_mysql(
             mysql.get("service_name", "mysql"),
             mysql.get("cli_path"),
             mysql.get("defaults_file"),
-            int(mysql.get("timeout_seconds", 5)),
+            as_int(mysql.get("timeout_seconds", 5), 5),
         ),
         "laravel": scan_laravel_if_configured(laravel, max_lines),
     }
@@ -63,6 +63,13 @@ def collect_scan(config: dict[str, Any]) -> dict[str, Any]:
 
 def as_non_empty_str(value: Any) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def scan_laravel_if_configured(laravel: Any, max_lines: int) -> dict[str, Any]:
