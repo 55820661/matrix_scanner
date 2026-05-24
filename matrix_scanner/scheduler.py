@@ -55,5 +55,19 @@ def collect_scan(config: dict[str, Any]) -> dict[str, Any]:
             mysql.get("defaults_file"),
             int(mysql.get("timeout_seconds", 5)),
         ),
-        "laravel": scan_laravel(laravel.get("log_path", ""), laravel.get("path", ""), max_lines),
+        "laravel": scan_laravel_if_configured(laravel, max_lines),
     }
+
+
+def as_non_empty_str(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def scan_laravel_if_configured(laravel: Any, max_lines: int) -> dict[str, Any]:
+    if not isinstance(laravel, dict):
+        return {"enabled": False, "reason": "No Laravel log path configured"}
+    project_path = as_non_empty_str(laravel.get("path"))
+    log_path = as_non_empty_str(laravel.get("log_path"))
+    if not project_path or not log_path:
+        return {"enabled": False, "reason": "No Laravel log path configured"}
+    return scan_laravel(log_path, project_path, max_lines)

@@ -53,6 +53,7 @@ class PerformanceToolTests(unittest.TestCase):
 
     def test_server_performance_syncs_to_sqlite_registry(self):
         conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
         db.sync_tools_registry(conn, build_registry())
 
         row = conn.execute("SELECT type, output_type, requires_confirmation, enabled FROM tools_registry WHERE tool_key = ?", ("server_performance",)).fetchone()
@@ -64,6 +65,7 @@ class PerformanceToolTests(unittest.TestCase):
 
     def test_truncation_still_applies_through_executor(self):
         conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
         spec = ToolSpec(
             "server_performance",
             "Server Performance",
@@ -84,6 +86,22 @@ class PerformanceToolTests(unittest.TestCase):
                 "services": [],
                 "logs": {"nginx_access": "missing-access.log", "nginx_error": "missing-error.log", "max_lines": 10},
                 "laravel": {"path": ".", "log_path": "missing-laravel.log"},
+                "php_fpm": {"service_name": "php-fpm", "pool_config_paths": []},
+                "mysql": {"service_name": "mysql", "timeout_seconds": 1},
+                "thresholds": {},
+            }
+        )
+
+        result = server_performance({"config": config})
+
+        self.assertIn("Server Performance", result["summary_text"])
+
+    def test_server_performance_with_applications_only_config(self):
+        config = AppConfig(
+            values={
+                "services": [],
+                "applications": [{"service_name": "app", "path": "/opt/app", "type": "unknown", "log_path": ""}],
+                "logs": {"nginx_access": "missing-access.log", "nginx_error": "missing-error.log", "max_lines": 10},
                 "php_fpm": {"service_name": "php-fpm", "pool_config_paths": []},
                 "mysql": {"service_name": "mysql", "timeout_seconds": 1},
                 "thresholds": {},
