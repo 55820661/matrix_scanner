@@ -1,0 +1,10 @@
+[Unit]
+Description=Matrix Scanner periodic scan
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/matrix-scanner
+EnvironmentFile=-/etc/matrix-scanner/matrix-scanner.env
+ExecStart=/opt/matrix-scanner/.venv/bin/matrix-scanner --config /etc/matrix-scanner/config.yaml scan
+User=matrix-scanner
+Group=matrix-scanner

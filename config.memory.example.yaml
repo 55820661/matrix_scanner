@@ -1,0 +1,21 @@
+# Local smoke-test config that keeps SQLite in memory.
+database_path: :memory:
+services: []
+logs:
+  nginx_access: missing-access.log
+  nginx_error: missing-error.log
+  max_lines: 10
+laravel:
+  path: .
+  log_path: missing-laravel.log
+thresholds:
+  cpu_percent: 101
+  ram_percent: 101
+  disk_percent: 101
+alert_cooldown_minutes: 360
+telegram:
+  allowed_user_ids: []
+  allowed_chat_ids: []
+  default_chat_id:
+  poll_timeout_seconds: 1
+  poll_sleep_seconds: 0

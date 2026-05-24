@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-scanner"
+version = "0.1.0"
+description = "Read-only Laravel server diagnostic agent with Telegram reporting."
+requires-python = ">=3.10"
+authors = [{ name = "Matrix Scanner Contributors" }]
+
+[project.scripts]
+matrix-scanner = "matrix_scanner.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["matrix_scanner*"]

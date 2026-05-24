@@ -1,0 +1,48 @@
+# Matrix Scanner example config. Secrets must be provided via environment variables.
+
+database_path: data/matrix_scanner.sqlite3
+scan_interval_minutes: 60
+metrics_retention_days: 14
+alerts_enabled: true
+alert_cooldown_minutes: 360
+telegram_enabled: false
+confirmation_timeout_seconds: 120
+
+laravel:
+  path: /var/www/app
+  log_path: /var/www/app/storage/logs/laravel.log
+
+services:
+  - nginx
+  - php-fpm
+  - mysql
+
+logs:
+  nginx_access: /var/log/nginx/access.log
+  nginx_error: /var/log/nginx/error.log
+  max_lines: 500
+
+php_fpm:
+  service_name: php-fpm
+  pool_config_paths:
+    - /etc/php/*/fpm/pool.d/*.conf
+
+mysql:
+  service_name: mysql
+  cli_path:
+  defaults_file:
+  timeout_seconds: 5
+
+thresholds:
+  cpu_percent: 85
+  ram_percent: 85
+  disk_percent: 90
+  nginx_5xx_count: 20
+  laravel_error_count: 5
+
+telegram:
+  allowed_user_ids: []
+  allowed_chat_ids: []
+  default_chat_id:
+  poll_timeout_seconds: 30
+  poll_sleep_seconds: 1
