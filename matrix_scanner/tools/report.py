@@ -6,6 +6,16 @@ from matrix_scanner.scheduler import collect_scan
 
 
 def generate_report(context: dict) -> dict:
-    scan = collect_scan(context["config"])
-    alerts = evaluate_alerts(scan, context["config"].get("thresholds", {}))
-    return {"report_text": full_report(scan, alerts), "scan": scan, "alerts": alerts}
+    scan = context.get("scan") or collect_scan(context["config"])
+    alerts = evaluate_alerts(_scan_for_configured_services(scan, context["config"].get("services", [])), context["config"].get("thresholds", {}))
+    return {"report_text": full_report(scan, alerts, context["config"]), "scan": scan, "alerts": alerts}
+
+
+def _scan_for_configured_services(scan: dict, configured_services: list[str]) -> dict:
+    filtered = dict(scan)
+    filtered["services"] = {
+        name: result
+        for name, result in scan.get("services", {}).items()
+        if name in configured_services
+    }
+    return filtered

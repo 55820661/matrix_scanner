@@ -36,7 +36,7 @@ def build_service_rows(scanned_services: dict[str, Any], configured_services: li
     return rows
 
 
-def format_performance_table(metric_rows: list[dict[str, str]], service_rows: list[dict[str, str]], summary: str) -> str:
+def format_performance_table(metric_rows: list[dict[str, str]], service_rows: list[dict[str, str]], summary: str, *, include_summary: bool = True) -> str:
     lines = [
         "Server Performance",
         "",
@@ -50,7 +50,8 @@ def format_performance_table(metric_rows: list[dict[str, str]], service_rows: li
         lines.extend(f"| {row['service']} | {row['status']} | {row['evaluation']} |" for row in service_rows)
     else:
         lines.append("No services configured.")
-    lines.extend(["", f"الخلاصة: {summary}"])
+    if include_summary:
+        lines.extend(["", f"الخلاصة: {summary}"])
     return "\n".join(lines)
 
 
