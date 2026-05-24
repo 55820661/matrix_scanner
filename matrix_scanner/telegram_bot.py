@@ -19,6 +19,16 @@ COMMAND_TO_TOOL = {
     "/nginx": "get_nginx_errors",
     "/laravel": "get_laravel_errors",
     "/report": "generate_report",
+    "/top": "top_processes",
+    "/apache": "apache_error_summary",
+    "/5xx": "apache_5xx_summary",
+    "/laravel-log": "laravel_log_health",
+    "/laravel-env": "laravel_env_sanity",
+    "/laravel-exceptions": "laravel_exception_summary",
+    "/queue": "queue_workers_summary",
+    "/supervisor": "supervisor_summary",
+    "/cron": "suspicious_cron_scan",
+    "/suspicious": "suspicious_files_scan",
 }
 
 TELEGRAM_MESSAGE_LIMIT = 4096
@@ -32,9 +42,19 @@ COMMAND_DESCRIPTIONS = {
     "/nginx": "ملخص Nginx",
     "/laravel": "ملخص Laravel إن كان مفعّلًا",
     "/report": "تقرير كامل",
+    "/top": "أعلى العمليات CPU/RAM",
+    "/apache": "ملخص أخطاء Apache",
+    "/5xx": "ملخص Apache 5xx",
+    "/laravel-log": "صحة Laravel logs",
+    "/laravel-env": "فحص Laravel .env الآمن",
+    "/laravel-exceptions": "ملخص Laravel exceptions",
+    "/queue": "ملخص queue workers",
+    "/supervisor": "ملخص Supervisor",
+    "/cron": "فحص cron مشبوه",
+    "/suspicious": "فحص ملفات مخفية مشبوهة",
     "/help": "عرض القائمة",
 }
-COMMAND_ORDER = ["/status", "/report", "/performance", "/services", "/disk", "/nginx", "/laravel", "/help"]
+COMMAND_ORDER = ["/status", "/report", "/performance", "/services", "/disk", "/top", "/apache", "/5xx", "/nginx", "/laravel", "/laravel-log", "/laravel-env", "/laravel-exceptions", "/queue", "/supervisor", "/cron", "/suspicious", "/help"]
 
 
 def build_help_text(registry: dict[str, Any], config: dict[str, Any]) -> str:

@@ -32,6 +32,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("disk")
     sub.add_parser("services")
     sub.add_parser("report")
+    sub.add_parser("top")
+    sub.add_parser("apache")
+    sub.add_parser("5xx")
+    sub.add_parser("laravel-log")
+    sub.add_parser("laravel-env")
+    sub.add_parser("laravel-exceptions")
+    sub.add_parser("queue")
+    sub.add_parser("supervisor")
+    sub.add_parser("cron")
+    sub.add_parser("suspicious")
     telegram = sub.add_parser("test-telegram")
     telegram.add_argument("--chat-id", help="Override Telegram chat id.")
     bot = sub.add_parser("telegram-bot")
@@ -81,6 +91,16 @@ def main(argv: list[str] | None = None) -> int:
         "disk": "get_disk",
         "services": "get_services",
         "report": "generate_report",
+        "top": "top_processes",
+        "apache": "apache_error_summary",
+        "5xx": "apache_5xx_summary",
+        "laravel-log": "laravel_log_health",
+        "laravel-env": "laravel_env_sanity",
+        "laravel-exceptions": "laravel_exception_summary",
+        "queue": "queue_workers_summary",
+        "supervisor": "supervisor_summary",
+        "cron": "suspicious_cron_scan",
+        "suspicious": "suspicious_files_scan",
     }[args.command]
     result = execute_tool(conn, registry, tool_key=tool_key, context=context, source="cli")
     print(_display_result(result))
