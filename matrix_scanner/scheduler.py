@@ -5,6 +5,7 @@ from typing import Any
 
 from matrix_scanner import db
 from matrix_scanner.alerts.cooldown import filter_alerts_for_cooldown
+from matrix_scanner.alerts.notifier import notify_alerts
 from matrix_scanner.alerts.rules import evaluate_alerts
 from matrix_scanner.scanners.laravel import scan_laravel
 from matrix_scanner.scanners.mysql import scan_mysql
@@ -14,7 +15,7 @@ from matrix_scanner.scanners.services import scan_services
 from matrix_scanner.scanners.system import scan_system
 
 
-def run_scan(conn, config: dict[str, Any]) -> dict[str, Any]:
+def run_scan(conn, config: dict[str, Any], *, telegram_token: str | None = None, alert_send_func=None) -> dict[str, Any]:
     started = datetime.now(timezone.utc)
     raw = collect_scan(config)
     summary = {
@@ -24,7 +25,7 @@ def run_scan(conn, config: dict[str, Any]) -> dict[str, Any]:
         "services": {k: v.get("status") for k, v in raw.get("services", {}).items()},
     }
     alerts = evaluate_alerts(raw, config.get("thresholds", {}))
-    alerts_to_store = filter_alerts_for_cooldown(conn, alerts, int(config.get("alert_cooldown_minutes", 360)))
+    alerts_to_store = filter_alerts_for_cooldown(conn, alerts, int(config.get("alert_cooldown_minutes", 360))) if config.get("alerts_enabled", True) else []
     finished = datetime.now(timezone.utc)
     scan_id = db.insert_scan_result(
         conn,
@@ -35,7 +36,8 @@ def run_scan(conn, config: dict[str, Any]) -> dict[str, Any]:
         raw_result=raw,
     )
     db.insert_alerts(conn, scan_id, alerts_to_store)
-    return {"scan_id": scan_id, "summary": summary, "raw": raw, "alerts": alerts_to_store}
+    notification = notify_alerts(alerts_to_store, config, telegram_token, alert_send_func) if alert_send_func else notify_alerts(alerts_to_store, config, telegram_token)
+    return {"scan_id": scan_id, "summary": summary, "raw": raw, "alerts": alerts_to_store, "notification": notification}
 
 
 def collect_scan(config: dict[str, Any]) -> dict[str, Any]:

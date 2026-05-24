@@ -65,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"SQLite database is ready: {app_config.database_path}")
         return 0
     if args.command == "scan":
-        result = run_scan(conn, app_config.values)
+        result = run_scan(conn, app_config.values, telegram_token=app_config.telegram_bot_token)
+        for warning in result.get("notification", {}).get("warnings", []):
+            print(f"Warning: {warning}", file=sys.stderr)
         print(json.dumps({"scan_id": result["scan_id"], "summary": result["summary"], "alerts": result["alerts"]}, ensure_ascii=False, indent=2))
         return 0
     if args.command == "test-telegram":

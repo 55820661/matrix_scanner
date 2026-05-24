@@ -102,6 +102,83 @@ class DbAndSchedulerTests(unittest.TestCase):
             collect_scan(base | {"laravel": {"path": ".", "log_path": "missing-laravel.log"}})
             scan_laravel.assert_called_once_with("missing-laravel.log", ".", 10)
 
+    def test_scan_sends_telegram_alert_when_enabled(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        sent = []
+        config = {
+            "alerts_enabled": True,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 90, "cpu_percent": 101, "ram_percent": 101},
+            "alert_cooldown_minutes": 360,
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 91.2}}, "services": {}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            result = run_scan(conn, config, telegram_token="token", alert_send_func=lambda token, chat_id, text: sent.append((token, chat_id, text)))
+
+        self.assertEqual(result["notification"]["sent"], 1)
+        self.assertEqual(sent[0][0], "token")
+        self.assertEqual(sent[0][1], 456)
+        self.assertIn("مساحة القرص منخفضة", sent[0][2])
+
+    def test_scan_alert_cooldown_prevents_duplicate_telegram_alert(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        sent = []
+        config = {
+            "alerts_enabled": True,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 90, "cpu_percent": 101, "ram_percent": 101},
+            "alert_cooldown_minutes": 360,
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 91.2}}, "services": {}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            run_scan(conn, config, telegram_token="token", alert_send_func=lambda token, chat_id, text: sent.append(text))
+            second = run_scan(conn, config, telegram_token="token", alert_send_func=lambda token, chat_id, text: sent.append(text))
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(second["alerts"], [])
+        self.assertEqual(second["notification"]["sent"], 0)
+
+    def test_scan_does_not_fail_when_telegram_token_missing(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        config = {
+            "alerts_enabled": True,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 90, "cpu_percent": 101, "ram_percent": 101},
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 91.2}}, "services": {}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            result = run_scan(conn, config, telegram_token=None, alert_send_func=lambda *args: self.fail("send should not be called"))
+
+        self.assertEqual(result["notification"]["sent"], 0)
+        self.assertIn("TELEGRAM_BOT_TOKEN is not set", result["notification"]["warnings"][0])
+
+    def test_scan_does_not_store_or_send_when_alerts_disabled(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        config = {
+            "alerts_enabled": False,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 90, "cpu_percent": 101, "ram_percent": 101},
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 91.2}}, "services": {}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            result = run_scan(conn, config, telegram_token="token", alert_send_func=lambda *args: self.fail("send should not be called"))
+
+        self.assertEqual(result["alerts"], [])
+        self.assertEqual(result["notification"]["sent"], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
