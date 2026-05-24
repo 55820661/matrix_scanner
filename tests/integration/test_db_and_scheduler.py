@@ -1,7 +1,8 @@
 import unittest
 
 from matrix_scanner import db
-from matrix_scanner.scheduler import run_scan
+from matrix_scanner.config import AppConfig
+from matrix_scanner.scheduler import collect_scan, run_scan
 from matrix_scanner.tool_registry import build_registry
 
 
@@ -26,6 +27,22 @@ class DbAndSchedulerTests(unittest.TestCase):
 
         count = conn.execute("SELECT COUNT(*) FROM tools_registry").fetchone()[0]
         self.assertGreaterEqual(count, 6)
+
+    def test_collect_scan_accepts_app_config(self):
+        config = AppConfig(
+            values={
+                "services": [],
+                "logs": {"nginx_access": "missing-access.log", "nginx_error": "missing-error.log", "max_lines": 10},
+                "laravel": {"path": ".", "log_path": "missing-laravel.log"},
+                "php_fpm": {"service_name": "php-fpm", "pool_config_paths": []},
+                "mysql": {"service_name": "mysql", "timeout_seconds": 1},
+            }
+        )
+
+        result = collect_scan(config)
+
+        self.assertIn("system", result)
+        self.assertIn("services", result)
 
 
 if __name__ == "__main__":

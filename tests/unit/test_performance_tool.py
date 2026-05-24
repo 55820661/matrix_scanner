@@ -1,6 +1,7 @@
 import unittest
 
 from matrix_scanner import db
+from matrix_scanner.config import AppConfig
 from matrix_scanner.tool_executor import execute_tool
 from matrix_scanner.tool_registry import ToolSpec, build_registry
 from matrix_scanner.tools.performance import server_performance
@@ -76,6 +77,22 @@ class PerformanceToolTests(unittest.TestCase):
 
         self.assertTrue(result["output"]["_truncated"])
         self.assertLessEqual(len(result["output"]["summary_text"]), 80)
+
+    def test_server_performance_accepts_app_config(self):
+        config = AppConfig(
+            values={
+                "services": [],
+                "logs": {"nginx_access": "missing-access.log", "nginx_error": "missing-error.log", "max_lines": 10},
+                "laravel": {"path": ".", "log_path": "missing-laravel.log"},
+                "php_fpm": {"service_name": "php-fpm", "pool_config_paths": []},
+                "mysql": {"service_name": "mysql", "timeout_seconds": 1},
+                "thresholds": {},
+            }
+        )
+
+        result = server_performance({"config": config})
+
+        self.assertIn("Server Performance", result["summary_text"])
 
 
 if __name__ == "__main__":

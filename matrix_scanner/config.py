@@ -49,6 +49,15 @@ class AppConfig:
     def database_path(self) -> Path:
         return Path(str(self.values["database_path"]))
 
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.values.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.values[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.values
+
 
 def load_config(path: str | Path | None = None) -> AppConfig:
     values = _deep_copy(DEFAULT_CONFIG)

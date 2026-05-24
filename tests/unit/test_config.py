@@ -23,6 +23,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.values["telegram"]["allowed_user_ids"], [123])
         self.assertNotIn("secret-token", str(config.values))
 
+    def test_app_config_supports_dict_like_access(self):
+        config = load_config(None)
+
+        self.assertEqual(config.get("logs", {}), config.values["logs"])
+        self.assertEqual(config["logs"], config.values["logs"])
+        self.assertIn("logs", config)
+
     @staticmethod
     def _restore_env(key, value):
         if value is None:
