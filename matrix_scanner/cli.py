@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import signal
 import sys
 import threading
@@ -55,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
                 force=args.force,
                 all_services=args.all_services,
                 include_inactive=args.include_inactive,
+                input_func=_safe_input,
             )
         except KeyboardInterrupt:
             print("\nSetup cancelled. No changes were made.")
@@ -166,6 +168,23 @@ def _configure_output_encoding() -> None:
                 stream.reconfigure(encoding="utf-8")
             except OSError:
                 pass
+
+
+def _safe_input(prompt: str) -> str:
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    stream = getattr(sys.stdin, "buffer", None)
+    if stream is None:
+        try:
+            return input()
+        except UnicodeDecodeError:
+            print("\nInvalid input encoding. Please try again.")
+            return ""
+    raw = stream.readline()
+    if raw == b"":
+        raise EOFError
+    encoding = sys.stdin.encoding or locale.getpreferredencoding(False) or "utf-8"
+    return raw.decode(encoding, errors="replace").rstrip("\r\n")
 
 
 if __name__ == "__main__":

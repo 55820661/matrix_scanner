@@ -2,9 +2,10 @@ import contextlib
 import io
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
-from matrix_scanner.cli import main
+from matrix_scanner.cli import _safe_input, main
 from matrix_scanner.setup import (
     ApplicationInfo,
     InvalidServiceSelection,
@@ -246,6 +247,17 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(code, 130)
         self.assertIn("Setup cancelled. No changes were made.", output.getvalue())
         self.assertNotIn("Traceback", output.getvalue())
+
+    def test_safe_input_decodes_invalid_terminal_bytes_without_traceback(self):
+        stdin = SimpleNamespace(buffer=io.BytesIO(b"1,\xd9,3\n"), encoding="utf-8")
+        stdout = io.StringIO()
+
+        with mock.patch("matrix_scanner.cli.sys.stdin", stdin):
+            with contextlib.redirect_stdout(stdout):
+                value = _safe_input("Select: ")
+
+        self.assertIn("Select: ", stdout.getvalue())
+        self.assertIn("\ufffd", value)
 
 
 if __name__ == "__main__":

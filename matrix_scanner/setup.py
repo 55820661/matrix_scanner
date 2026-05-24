@@ -390,7 +390,7 @@ def run_interactive_setup(
         nginx_error_log=nginx_error,
         logs_max_lines=max_lines,
     )
-    return write_config(config_path, content, force=force)
+    return write_config(config_path, content, force=force, confirm=input_func)
 
 
 def _strip_service_suffix(name: str) -> str:
