@@ -12,6 +12,8 @@ laravel:
   path: /var/www/app
   log_path: /var/www/app/storage/logs/laravel.log
 
+applications: []
+
 services:
   - nginx
   - php-fpm

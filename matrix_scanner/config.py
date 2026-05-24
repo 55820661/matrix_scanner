@@ -17,6 +17,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "path": "/var/www/app",
         "log_path": "/var/www/app/storage/logs/laravel.log",
     },
+    "applications": [],
     "services": ["nginx", "php-fpm", "mysql"],
     "logs": {
         "nginx_access": "/var/log/nginx/access.log",

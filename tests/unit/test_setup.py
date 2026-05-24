@@ -6,9 +6,11 @@ from unittest import mock
 
 from matrix_scanner.cli import main
 from matrix_scanner.setup import (
+    ApplicationInfo,
     InvalidServiceSelection,
     ServiceInfo,
     build_config_yaml,
+    detect_applications,
     filter_setup_services,
     parse_service_selection,
     prompt_service_selection,
@@ -43,17 +45,28 @@ class SetupTests(unittest.TestCase):
     def test_create_config_contains_selected_services(self):
         content = build_config_yaml(
             services=["nginx", "mysql"],
+            applications=[],
             database_path="data/matrix_scanner.sqlite3",
             nginx_access_log="/var/log/nginx/access.log",
             nginx_error_log="/var/log/nginx/error.log",
-            app_path="/var/www/app",
-            app_log_path="/var/www/app/storage/logs/laravel.log",
             logs_max_lines=500,
         )
 
         self.assertIn("services:\n  - nginx\n  - mysql", content)
         self.assertIn("database_path: data/matrix_scanner.sqlite3", content)
         self.assertNotIn("TELEGRAM_BOT_TOKEN", content)
+
+    def test_config_contains_applications(self):
+        content = build_config_yaml(
+            services=["app-worker"],
+            applications=[ApplicationInfo("app-worker", "/opt/app", "unknown", "")],
+            database_path="data/matrix_scanner.sqlite3",
+            nginx_access_log="/var/log/nginx/access.log",
+            nginx_error_log="/var/log/nginx/error.log",
+            logs_max_lines=500,
+        )
+
+        self.assertIn("applications:\n  - service_name: app-worker\n    path: /opt/app\n    type: unknown\n    log_path:", content)
 
     def test_default_filter_hides_system_services(self):
         services = [
@@ -110,7 +123,7 @@ class SetupTests(unittest.TestCase):
 
     def test_setup_does_not_prompt_for_additional_service_names(self):
         prompts = []
-        answers = iter(["none", "", "", "", "", "", ""])
+        answers = iter(["none", "", "", "", ""])
 
         def input_func(prompt):
             prompts.append(prompt)
@@ -122,6 +135,54 @@ class SetupTests(unittest.TestCase):
                     run_interactive_setup(Path("ignored.yaml"), input_func=input_func)
 
         self.assertFalse(any("Additional service names" in prompt for prompt in prompts))
+
+    def test_setup_does_not_prompt_for_laravel_paths(self):
+        prompts = []
+        answers = iter(["none", "", "", "", ""])
+
+        def input_func(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        with mock.patch("matrix_scanner.setup.discover_systemd_services", return_value=[]):
+            with mock.patch("matrix_scanner.setup.write_config", return_value=True):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    run_interactive_setup(Path("ignored.yaml"), input_func=input_func)
+
+        self.assertFalse(any("Laravel app path" in prompt for prompt in prompts))
+        self.assertFalse(any("Laravel log path" in prompt for prompt in prompts))
+
+    def test_service_working_directory_becomes_application(self):
+        services = [ServiceInfo("app", working_directory="/opt/app")]
+
+        applications = detect_applications(services)
+
+        self.assertEqual(applications, [ApplicationInfo("app", "/opt/app", "unknown", "")])
+
+    def test_multiple_services_create_multiple_applications(self):
+        services = [ServiceInfo("app-one", working_directory="/opt/one"), ServiceInfo("app-two", working_directory="/opt/two")]
+
+        applications = detect_applications(services)
+
+        self.assertEqual([app.path for app in applications], ["/opt/one", "/opt/two"])
+
+    def test_laravel_log_path_detected_only_when_file_exists(self):
+        existing = ServiceInfo("laravel-app", working_directory="tests/fixtures/laravel-app")
+        missing = ServiceInfo("laravel-missing", working_directory="tests/fixtures/laravel-missing")
+
+        applications = detect_applications([existing, missing])
+
+        self.assertEqual(applications[0].type, "laravel")
+        self.assertTrue(applications[0].log_path.endswith("storage\\logs\\laravel.log") or applications[0].log_path.endswith("storage/logs/laravel.log"))
+        self.assertEqual(applications[1].log_path, "")
+
+    def test_gunicorn_service_is_not_classified_as_laravel(self):
+        services = [ServiceInfo("django-app", working_directory="/opt/django", exec_start="/venv/bin/gunicorn project.wsgi")]
+
+        applications = detect_applications(services)
+
+        self.assertEqual(applications[0].type, "django")
+        self.assertEqual(applications[0].log_path, "")
 
     def test_run_setup_keyboard_interrupt_leaves_no_config(self):
         path = Path("setup_cancelled_test_config.yaml")

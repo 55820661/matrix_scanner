@@ -18,6 +18,14 @@ class ServiceInfo:
     environment_file: str = ""
 
 
+@dataclass(frozen=True)
+class ApplicationInfo:
+    service_name: str
+    path: str
+    type: str = "unknown"
+    log_path: str = ""
+
+
 class InvalidServiceSelection(ValueError):
     """Raised when setup service selection is not all/none/numeric."""
 
@@ -206,13 +214,14 @@ def prompt_service_selection(input_func: Callable[[str], str], services: list[Se
 def build_config_yaml(
     *,
     services: list[str],
+    applications: list[ApplicationInfo] | None = None,
     database_path: str,
     nginx_access_log: str,
     nginx_error_log: str,
-    app_path: str,
-    app_log_path: str,
     logs_max_lines: int,
 ) -> str:
+    applications = applications or []
+    laravel_app = next((app for app in applications if app.type == "laravel"), None)
     lines = [
         "# Matrix Scanner config. Secrets must be provided via environment variables.",
         "",
@@ -224,11 +233,31 @@ def build_config_yaml(
         "telegram_enabled: false",
         "confirmation_timeout_seconds: 120",
         "",
-        "laravel:",
-        f"  path: {app_path}",
-        f"  log_path: {app_log_path}",
-        "",
+        "applications:",
     ]
+    if applications:
+        for app in applications:
+            lines.extend(
+                [
+                    f"  - service_name: {app.service_name}",
+                    f"    path: {app.path}",
+                    f"    type: {app.type}",
+                    f"    log_path: {app.log_path}",
+                ]
+            )
+    else:
+        lines.append("  []")
+    lines.extend(
+        [
+            "",
+            "# Kept for backwards compatibility with current Laravel scanner.",
+            "# New setup data is written under applications above.",
+        "laravel:",
+            f"  path: {laravel_app.path if laravel_app else ''}",
+            f"  log_path: {laravel_app.log_path if laravel_app else ''}",
+        "",
+        ]
+    )
     if services:
         lines.append("services:")
         lines.extend(f"  - {service}" for service in services)
@@ -290,6 +319,36 @@ def write_config(path: Path, content: str, *, force: bool = False, confirm: Call
     return True
 
 
+def detect_applications(services: list[ServiceInfo]) -> list[ApplicationInfo]:
+    applications: list[ApplicationInfo] = []
+    for service in services:
+        if not service.working_directory:
+            continue
+        path = service.working_directory
+        app_type = detect_application_type(service, Path(path))
+        log_path = detect_application_log_path(app_type, Path(path))
+        applications.append(ApplicationInfo(service_name=service.name, path=path, type=app_type, log_path=log_path))
+    return applications
+
+
+def detect_application_type(service: ServiceInfo, app_path: Path) -> str:
+    if (app_path / "artisan").exists():
+        return "laravel"
+    exec_start = service.exec_start.lower()
+    if "gunicorn" in exec_start or "uwsgi" in exec_start or "django" in exec_start:
+        return "django"
+    if "node" in exec_start or "npm" in exec_start or "yarn" in exec_start or "pnpm" in exec_start:
+        return "node"
+    return "unknown"
+
+
+def detect_application_log_path(app_type: str, app_path: Path) -> str:
+    if app_type != "laravel":
+        return ""
+    laravel_log = app_path / "storage" / "logs" / "laravel.log"
+    return str(laravel_log) if laravel_log.exists() else ""
+
+
 def run_interactive_setup(
     config_path: Path,
     *,
@@ -313,9 +372,7 @@ def run_interactive_setup(
     selected = prompt_service_selection(input_func, services)
 
     enriched = [enrich_service_metadata(ServiceInfo(name=service)) for service in selected]
-    suggested_app_path = _first_non_empty([service.working_directory for service in enriched], "/var/www/app")
-    app_path = input_func(f"Laravel app path [{suggested_app_path}]: ").strip() or suggested_app_path
-    app_log = input_func(f"Laravel log path [{app_path}/storage/logs/laravel.log]: ").strip() or f"{app_path}/storage/logs/laravel.log"
+    applications = detect_applications(enriched)
     nginx_access = input_func("Nginx access log [/var/log/nginx/access.log]: ").strip() or "/var/log/nginx/access.log"
     nginx_error = input_func("Nginx error log [/var/log/nginx/error.log]: ").strip() or "/var/log/nginx/error.log"
     database_path = input_func("SQLite database path [data/matrix_scanner.sqlite3]: ").strip() or "data/matrix_scanner.sqlite3"
@@ -327,11 +384,10 @@ def run_interactive_setup(
 
     content = build_config_yaml(
         services=selected,
+        applications=applications,
         database_path=database_path,
         nginx_access_log=nginx_access,
         nginx_error_log=nginx_error,
-        app_path=app_path,
-        app_log_path=app_log,
         logs_max_lines=max_lines,
     )
     return write_config(config_path, content, force=force)
@@ -350,9 +406,3 @@ def _dedupe(values: list[str]) -> list[str]:
             result.append(value)
     return result
 
-
-def _first_non_empty(values: list[str], default: str) -> str:
-    for value in values:
-        if value:
-            return value
-    return default

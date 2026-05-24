@@ -26,7 +26,7 @@ python -m matrix_scanner.cli --config config.memory.example.yaml report
 python -B -m unittest discover -s tests
 ```
 
-Setup defaults to candidate application services. Use `setup --all-services` to show every systemd service, and `setup --include-inactive` to include inactive services in candidate mode.
+Setup defaults to candidate application services, derives application paths from systemd metadata such as `WorkingDirectory`, and does not ask for Laravel paths manually. Use `setup --all-services` to show every systemd service, and `setup --include-inactive` to include inactive services in candidate mode.
 
 For a real server, copy `config.yaml.example` to `config.yaml`, adjust paths and services, and set secrets through environment variables:
 
