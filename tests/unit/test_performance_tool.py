@@ -35,21 +35,45 @@ class PerformanceToolTests(unittest.TestCase):
         self.assertTrue(registry["server_performance"].enabled)
 
     def test_server_performance_output_contains_core_metrics_and_services(self):
-        result = server_performance({"config": {}, "scan": SAMPLE_SCAN})
+        result = server_performance({"config": {"services": ["nginx", "php-fpm", "mysql"]}, "scan": SAMPLE_SCAN})
         text = result["summary_text"]
 
-        for token in ("CPU", "RAM", "Disk", "Load", "Swap", "Uptime", "Nginx", "PHP-FPM", "MySQL"):
+        for token in ("CPU", "RAM", "Disk", "Load", "Swap", "Uptime", "nginx", "php-fpm", "mysql"):
             self.assertIn(token, text)
         self.assertIn("الخلاصة:", text)
 
     def test_server_performance_partial_service_failure_does_not_fail_report(self):
         scan = SAMPLE_SCAN | {"services": {"nginx": {"status": "active", "ok": True}, "mysql": {"status": "unavailable"}}}
 
-        result = server_performance({"config": {}, "scan": scan})
+        result = server_performance({"config": {"services": ["nginx", "mysql"]}, "scan": scan})
         text = result["summary_text"]
 
-        self.assertIn("| MySQL | غير متاح | لم يتم الفحص |", text)
-        self.assertIn("| PHP-FPM | غير متاح | لم يتم الفحص |", text)
+        self.assertIn("| mysql | unknown | لم يتم الفحص |", text)
+        self.assertNotIn("php-fpm", text)
+
+    def test_server_performance_displays_all_configured_services(self):
+        scan = SAMPLE_SCAN | {"services": {"service-1": {"status": "active", "ok": True}, "service-2": {"status": "active", "ok": True}, "service-3": {"status": "inactive"}}}
+
+        result = server_performance({"config": {"services": ["service-1", "service-2", "service-3"]}, "scan": scan})
+        text = result["summary_text"]
+
+        self.assertIn("| service-1 | running | يعمل |", text)
+        self.assertIn("| service-2 | running | يعمل |", text)
+        self.assertIn("| service-3 | inactive | تحذير |", text)
+
+    def test_server_performance_empty_services_does_not_fail(self):
+        result = server_performance({"config": {"services": []}, "scan": SAMPLE_SCAN})
+
+        self.assertIn("No services configured.", result["summary_text"])
+        self.assertIn("لا توجد خدمات محددة للفحص", result["summary"])
+
+    def test_server_performance_does_not_show_unconfigured_services(self):
+        result = server_performance({"config": {"services": ["nginx"]}, "scan": SAMPLE_SCAN})
+        text = result["summary_text"]
+
+        self.assertIn("| nginx | running | يعمل |", text)
+        self.assertNotIn("php-fpm", text)
+        self.assertNotIn("mysql", text)
 
     def test_server_performance_syncs_to_sqlite_registry(self):
         conn = db.connect(":memory:")

@@ -301,6 +301,10 @@ def build_config_yaml(
     return "\n".join(lines)
 
 
+def detect_nginx_log_path(path: str) -> str:
+    return path if Path(path).exists() else ""
+
+
 def should_overwrite_config(path: Path, *, force: bool, confirm: Callable[[str], str]) -> bool:
     if force or not path.exists():
         return True
@@ -373,14 +377,10 @@ def run_interactive_setup(
 
     enriched = [enrich_service_metadata(ServiceInfo(name=service)) for service in selected]
     applications = detect_applications(enriched)
-    nginx_access = input_func("Nginx access log [/var/log/nginx/access.log]: ").strip() or "/var/log/nginx/access.log"
-    nginx_error = input_func("Nginx error log [/var/log/nginx/error.log]: ").strip() or "/var/log/nginx/error.log"
-    database_path = input_func("SQLite database path [data/matrix_scanner.sqlite3]: ").strip() or "data/matrix_scanner.sqlite3"
-    max_lines_text = input_func("Log max lines [500]: ").strip() or "500"
-    try:
-        max_lines = int(max_lines_text)
-    except ValueError:
-        max_lines = 500
+    nginx_access = detect_nginx_log_path("/var/log/nginx/access.log")
+    nginx_error = detect_nginx_log_path("/var/log/nginx/error.log")
+    database_path = "data/matrix_scanner.sqlite3"
+    max_lines = 500
 
     content = build_config_yaml(
         services=selected,
@@ -405,4 +405,3 @@ def _dedupe(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
-

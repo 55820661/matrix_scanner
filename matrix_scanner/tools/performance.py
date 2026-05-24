@@ -10,6 +10,7 @@ def server_performance(context: dict) -> dict:
     return {
         "summary_text": performance["summary_text"],
         "rows": performance["rows"],
+        "service_rows": performance["service_rows"],
         "summary": performance["summary"],
         "scan": scan,
     }

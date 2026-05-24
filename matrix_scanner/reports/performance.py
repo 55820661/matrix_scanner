@@ -16,7 +16,7 @@ DEFAULT_THRESHOLDS = {
 def build_server_performance(scan: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = config or {}
     thresholds = DEFAULT_THRESHOLDS | config.get("thresholds", {})
-    rows = [
+    metric_rows = [
         _metric_row("CPU", _percent_value(scan.get("system", {}).get("cpu_percent")), _usage_status(scan.get("system", {}).get("cpu_percent"), thresholds["cpu_watch_percent"], thresholds["cpu_percent"], "جيد")),
         _metric_row("RAM", _percent_value(scan.get("system", {}).get("ram", {}).get("used_percent")), _usage_status(scan.get("system", {}).get("ram", {}).get("used_percent"), thresholds["ram_watch_percent"], thresholds["ram_percent"], "طبيعي")),
         _metric_row("Disk", _percent_value(scan.get("system", {}).get("disk", {}).get("used_percent")), _disk_status(scan.get("system", {}).get("disk", {}).get("used_percent"), thresholds["disk_watch_percent"], thresholds["disk_percent"])),
@@ -24,26 +24,32 @@ def build_server_performance(scan: dict[str, Any], config: dict[str, Any] | None
         _metric_row("Swap", _percent_value(scan.get("system", {}).get("swap", {}).get("used_percent")), _usage_status(scan.get("system", {}).get("swap", {}).get("used_percent"), 50, 80, "جيد")),
         _metric_row("Uptime", _uptime_value(scan.get("system", {}).get("uptime_seconds")), "مستقر" if scan.get("system", {}).get("uptime_seconds") else "غير متاح"),
     ]
-    services = scan.get("services", {})
-    rows.extend(
-        [
-            _service_row("Nginx", services.get("nginx")),
-            _service_row("PHP-FPM", _first_service(services, ("php-fpm", "php8.3-fpm", "php8.2-fpm", "php8.1-fpm"))),
-            _service_row("MySQL", _first_service(services, ("mysql", "mariadb"))),
-        ]
-    )
-    summary = _summary(rows)
-    return {"rows": rows, "summary": summary, "summary_text": format_performance_table(rows, summary)}
+    service_rows = build_service_rows(scan.get("services", {}), config.get("services", []))
+    summary = _summary(metric_rows, service_rows, bool(config.get("services", [])))
+    return {"rows": metric_rows, "service_rows": service_rows, "summary": summary, "summary_text": format_performance_table(metric_rows, service_rows, summary)}
 
 
-def format_performance_table(rows: list[dict[str, str]], summary: str) -> str:
+def build_service_rows(scanned_services: dict[str, Any], configured_services: list[str]) -> list[dict[str, str]]:
+    rows = []
+    for service_name in configured_services:
+        rows.append(_service_row(service_name, scanned_services.get(service_name)))
+    return rows
+
+
+def format_performance_table(metric_rows: list[dict[str, str]], service_rows: list[dict[str, str]], summary: str) -> str:
     lines = [
         "Server Performance",
         "",
         "| Metric | Value | Status |",
         "| --- | ---: | --- |",
     ]
-    lines.extend(f"| {row['metric']} | {row['value']} | {row['status']} |" for row in rows)
+    lines.extend(f"| {row['metric']} | {row['value']} | {row['status']} |" for row in metric_rows)
+    lines.extend(["", "Services", ""])
+    if service_rows:
+        lines.extend(["| Service | Status | Evaluation |", "| --- | --- | --- |"])
+        lines.extend(f"| {row['service']} | {row['status']} | {row['evaluation']} |" for row in service_rows)
+    else:
+        lines.append("No services configured.")
     lines.extend(["", f"الخلاصة: {summary}"])
     return "\n".join(lines)
 
@@ -52,22 +58,15 @@ def _metric_row(metric: str, value: str, status: str) -> dict[str, str]:
     return {"metric": metric, "value": value, "status": status}
 
 
-def _service_row(metric: str, service: dict[str, Any] | None) -> dict[str, str]:
+def _service_row(service_name: str, service: dict[str, Any] | None) -> dict[str, str]:
     if not service:
-        return _metric_row(metric, "غير متاح", "لم يتم الفحص")
+        return {"service": service_name, "status": "unknown", "evaluation": "لم يتم الفحص"}
     status = service.get("status", "unknown")
     if status in {"active", "running"} or service.get("ok") is True:
-        return _metric_row(metric, "running", "يعمل")
+        return {"service": service_name, "status": "running", "evaluation": "يعمل"}
     if status == "unavailable":
-        return _metric_row(metric, "غير متاح", "لم يتم الفحص")
-    return _metric_row(metric, str(status), "تحذير")
-
-
-def _first_service(services: dict[str, dict], names: tuple[str, ...]) -> dict[str, Any] | None:
-    for name in names:
-        if name in services:
-            return services[name]
-    return None
+        return {"service": service_name, "status": "unknown", "evaluation": "لم يتم الفحص"}
+    return {"service": service_name, "status": str(status), "evaluation": "تحذير"}
 
 
 def _percent_value(value: Any) -> str:
@@ -116,14 +115,21 @@ def _disk_status(value: Any, watch: float, critical: float) -> str:
     return "حرج"
 
 
-def _summary(rows: list[dict[str, str]]) -> str:
-    statuses = {row["status"] for row in rows}
-    if "حرج" in statuses:
+def _summary(metric_rows: list[dict[str, str]], service_rows: list[dict[str, str]], has_configured_services: bool) -> str:
+    metric_statuses = {row["status"] for row in metric_rows}
+    service_evaluations = {row["evaluation"] for row in service_rows}
+    if not has_configured_services:
+        return "لا توجد خدمات محددة للفحص، وتم عرض مؤشرات السيرفر فقط."
+    if "تحذير" in service_evaluations:
+        return "توجد خدمة أو أكثر لا تعمل وتحتاج مراجعة."
+    if "حرج" in metric_statuses:
         return "توجد مشكلة حرجة تحتاج متابعة فورية."
-    if "تحذير" in statuses:
+    if "تحذير" in metric_statuses:
         return "حالة السيرفر تحتاج متابعة، ولا توجد مشكلة حرجة حاليًا."
-    if "مراقبة" in statuses:
-        return "حالة السيرفر جيدة إجمالًا مع بعض البنود تحت المراقبة."
-    if "غير متاح" in statuses or "لم يتم الفحص" in statuses:
+    if "لم يتم الفحص" in service_evaluations:
+        return "حالة السيرفر جزئية لأن خدمة أو أكثر لم يتم فحصها."
+    if "مراقبة" in metric_statuses:
+        return "حالة السيرفر جيدة إجمالًا مع بعض المؤشرات تحت المراقبة، وجميع الخدمات المختارة تعمل حاليًا."
+    if "غير متاح" in metric_statuses:
         return "الفحص جزئي بسبب بنود غير متاحة، ولا توجد مشكلة حرجة ظاهرة حاليًا."
-    return "حالة السيرفر جيدة، ولا توجد مشكلة حرجة حاليًا."
+    return "حالة السيرفر جيدة، وجميع الخدمات المختارة تعمل حاليًا."

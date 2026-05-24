@@ -123,7 +123,7 @@ class SetupTests(unittest.TestCase):
 
     def test_setup_does_not_prompt_for_additional_service_names(self):
         prompts = []
-        answers = iter(["none", "", "", "", ""])
+        answers = iter(["none"])
 
         def input_func(prompt):
             prompts.append(prompt)
@@ -138,7 +138,7 @@ class SetupTests(unittest.TestCase):
 
     def test_setup_does_not_prompt_for_laravel_paths(self):
         prompts = []
-        answers = iter(["none", "", "", "", ""])
+        answers = iter(["none"])
 
         def input_func(prompt):
             prompts.append(prompt)
@@ -151,6 +151,47 @@ class SetupTests(unittest.TestCase):
 
         self.assertFalse(any("Laravel app path" in prompt for prompt in prompts))
         self.assertFalse(any("Laravel log path" in prompt for prompt in prompts))
+
+    def test_setup_does_not_prompt_for_nginx_or_database_or_log_lines(self):
+        prompts = []
+        answers = iter(["none"])
+
+        def input_func(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        with mock.patch("matrix_scanner.setup.discover_systemd_services", return_value=[]):
+            with mock.patch("matrix_scanner.setup.write_config", return_value=True):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    run_interactive_setup(Path("ignored.yaml"), input_func=input_func)
+
+        forbidden = ("Nginx access log", "Nginx error log", "SQLite database path", "Log max lines")
+        self.assertFalse(any(any(label in prompt for label in forbidden) for prompt in prompts))
+
+    def test_setup_defaults_database_and_max_lines(self):
+        content = build_config_yaml(
+            services=[],
+            applications=[],
+            database_path="data/matrix_scanner.sqlite3",
+            nginx_access_log="",
+            nginx_error_log="",
+            logs_max_lines=500,
+        )
+
+        self.assertIn("database_path: data/matrix_scanner.sqlite3", content)
+        self.assertIn("  max_lines: 500", content)
+
+    def test_setup_uses_detected_nginx_logs_when_present(self):
+        with mock.patch("matrix_scanner.setup.Path.exists", return_value=True):
+            from matrix_scanner.setup import detect_nginx_log_path
+
+            self.assertEqual(detect_nginx_log_path("/var/log/nginx/access.log"), "/var/log/nginx/access.log")
+
+    def test_setup_does_not_fail_when_nginx_logs_missing(self):
+        with mock.patch("matrix_scanner.setup.Path.exists", return_value=False):
+            from matrix_scanner.setup import detect_nginx_log_path
+
+            self.assertEqual(detect_nginx_log_path("/var/log/nginx/access.log"), "")
 
     def test_service_working_directory_becomes_application(self):
         services = [ServiceInfo("app", working_directory="/opt/app")]
