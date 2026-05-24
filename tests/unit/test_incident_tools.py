@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from matrix_scanner.scanners import incident
-from matrix_scanner.telegram_bot import available_commands, build_help_text, command_keyboard
+from matrix_scanner.telegram_bot import available_commands, build_help_text, command_keyboard, command_group_for_command, submenu_keyboard
 from matrix_scanner.tool_registry import build_registry
 from matrix_scanner.tools.incident import apache_5xx_summary, supervisor_summary
 
@@ -98,13 +98,17 @@ class IncidentToolsTests(unittest.TestCase):
         registry = build_registry()
         config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
         commands = available_commands(registry, config)
-        keyboard = [command for row in command_keyboard(registry, config)["keyboard"] for command in row]
+        main_keyboard = [command for row in command_keyboard(registry, config)["keyboard"] for command in row]
         help_text = build_help_text(registry, config)
 
+        self.assertIn("🖥 Server", main_keyboard)
+        self.assertIn("🌐 Web / Logs", main_keyboard)
         for command in ["/top", "/apache", "/5xx", "/queue", "/supervisor", "/cron", "/suspicious"]:
             self.assertIn(command, commands)
-            self.assertIn(command, keyboard)
-            self.assertIn(command, help_text)
+            group = command_group_for_command(command, registry, config)
+            submenu = [item for row in submenu_keyboard(group, registry, config)["keyboard"] for item in row]
+            self.assertIn(command, submenu)
+        self.assertIn("اختر قسمًا", help_text)
 
 
 class FakePath:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from matrix_scanner import db
 from matrix_scanner.cli import _telegram_bot
-from matrix_scanner.telegram_bot import MENU_PROMPT, available_commands, build_help_text, command_keyboard, format_tool_response, handle_update, is_update_allowed, map_command, poll_once
+from matrix_scanner.telegram_bot import BACK_BUTTON, MAIN_MENU_PROMPT, MENU_PROMPT, SUBMENU_PROMPT, available_commands, build_help_text, command_keyboard, format_tool_response, handle_update, is_update_allowed, map_command, poll_once, submenu_keyboard
 from matrix_scanner.telegram_bot import run_long_polling
 from matrix_scanner.tool_registry import ToolSpec
 
@@ -24,6 +24,16 @@ def telegram_registry(**overrides):
         "get_nginx_errors": tool("get_nginx_errors", type="diagnostic"),
         "get_laravel_errors": tool("get_laravel_errors", type="diagnostic"),
         "generate_report": tool("generate_report", type="diagnostic"),
+        "top_processes": tool("top_processes"),
+        "apache_error_summary": tool("apache_error_summary"),
+        "apache_5xx_summary": tool("apache_5xx_summary"),
+        "laravel_log_health": tool("laravel_log_health"),
+        "laravel_env_sanity": tool("laravel_env_sanity"),
+        "laravel_exception_summary": tool("laravel_exception_summary"),
+        "queue_workers_summary": tool("queue_workers_summary"),
+        "supervisor_summary": tool("supervisor_summary"),
+        "suspicious_cron_scan": tool("suspicious_cron_scan"),
+        "suspicious_files_scan": tool("suspicious_files_scan"),
     }
     registry.update(overrides)
     return registry
@@ -118,7 +128,7 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(sent[0], ("Server Performance\n\nCPU: 4.7% - جيد", None))
-        self.assertEqual(sent[1], (MENU_PROMPT, command_keyboard(registry, {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
+        self.assertEqual(sent[1], (SUBMENU_PROMPT, submenu_keyboard("🖥 Server", registry, {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
 
     def test_handle_update_sends_short_report_for_report_command(self):
         conn = db.connect(":memory:")
@@ -147,7 +157,7 @@ class TelegramTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "handled")
         self.assertEqual(sent[0], (456, "تقرير Matrix Scanner\nلا توجد مشاكل.", None))
-        self.assertEqual(sent[1], (456, MENU_PROMPT, command_keyboard(registry, {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
+        self.assertEqual(sent[1], (456, SUBMENU_PROMPT, submenu_keyboard("📄 Reports", registry, {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
 
     def test_start_displays_menu_with_keyboard(self):
         conn = db.connect(":memory:")
@@ -166,8 +176,7 @@ class TelegramTests(unittest.TestCase):
         self.assertEqual(result["status"], "handled")
         self.assertEqual(result["tool_key"], "help")
         self.assertIn("مرحبًا بك في Matrix Scanner", sent[0][0])
-        self.assertIn("/status - حالة السيرفر العامة", sent[0][0])
-        self.assertIn("/nginx - ملخص Nginx", sent[0][0])
+        self.assertIn("اختر قسمًا", sent[0][0])
         self.assertEqual(sent[0][1], command_keyboard(telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}))
 
     def test_help_displays_menu_with_keyboard(self):
@@ -185,24 +194,26 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "handled")
-        self.assertIn("/report - تقرير كامل", sent[0][0])
-        self.assertIn("/laravel - ملخص Laravel إن كان مفعّلًا", sent[0][0])
+        self.assertIn("اختر قسمًا", sent[0][0])
         self.assertEqual(sent[0][1], command_keyboard(telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}))
 
-    def test_help_includes_every_visible_mapped_command(self):
+    def test_start_keyboard_shows_main_menu_only(self):
         registry = telegram_registry()
         config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+        flattened = [item for row in command_keyboard(registry, config)["keyboard"] for item in row]
 
-        text = build_help_text(registry, config)
+        self.assertIn("🖥 Server", flattened)
+        self.assertIn("🌐 Web / Logs", flattened)
+        self.assertNotIn("/status", flattened)
+        self.assertNotIn("/nginx", flattened)
 
-        for command in available_commands(registry, config):
-            self.assertIn(command, text)
-
-    def test_keyboard_contains_nginx_when_enabled(self):
-        keyboard = command_keyboard(telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})
+    def test_web_submenu_contains_nginx_when_enabled(self):
+        keyboard = submenu_keyboard("🌐 Web / Logs", telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})
         flattened = [command for row in keyboard["keyboard"] for command in row]
 
         self.assertIn("/nginx", flattened)
+        self.assertIn("/apache", flattened)
+        self.assertIn(BACK_BUTTON, flattened)
 
     def test_disabled_command_is_hidden(self):
         registry = telegram_registry(get_nginx_errors=tool("get_nginx_errors", enabled=False, type="diagnostic"))
@@ -210,9 +221,11 @@ class TelegramTests(unittest.TestCase):
 
         text = build_help_text(registry, config)
         flattened = [command for row in command_keyboard(registry, config)["keyboard"] for command in row]
+        submenu = [command for row in submenu_keyboard("🌐 Web / Logs", registry, config)["keyboard"] for command in row]
 
         self.assertNotIn("/nginx", text)
         self.assertNotIn("/nginx", flattened)
+        self.assertNotIn("/nginx", submenu)
 
     def test_action_command_is_hidden_without_approved_fix(self):
         registry = telegram_registry(restart_service=tool("restart_service", type="action"))
@@ -224,6 +237,110 @@ class TelegramTests(unittest.TestCase):
 
         self.assertNotIn("/restart", text)
         self.assertNotIn("/restart", flattened)
+
+    def test_server_group_selection_displays_server_commands_only(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry()
+        config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+
+        result = handle_update(
+            conn=conn,
+            registry=registry,
+            config=config,
+            token="token",
+            update={"message": {"text": "🖥 Server", "from": {"id": 123}, "chat": {"id": 456}}},
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        flattened = [command for row in sent[0][1]["keyboard"] for command in row]
+        self.assertEqual(result["group"], "🖥 Server")
+        self.assertIn("/status", flattened)
+        self.assertIn("/top", flattened)
+        self.assertNotIn("/apache", flattened)
+
+    def test_laravel_group_selection_displays_laravel_commands_only(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry()
+        config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+
+        handle_update(
+            conn=conn,
+            registry=registry,
+            config=config,
+            token="token",
+            update={"message": {"text": "🧩 Laravel", "from": {"id": 123}, "chat": {"id": 456}}},
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        flattened = [command for row in sent[0][1]["keyboard"] for command in row]
+        self.assertIn("/laravel", flattened)
+        self.assertIn("/laravel-exceptions", flattened)
+        self.assertNotIn("/queue", flattened)
+
+    def test_back_returns_main_menu(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry()
+        config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+
+        handle_update(
+            conn=conn,
+            registry=registry,
+            config=config,
+            token="token",
+            update={"message": {"text": BACK_BUTTON, "from": {"id": 123}, "chat": {"id": 456}}},
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        flattened = [item for row in sent[0][1]["keyboard"] for item in row]
+        self.assertEqual(sent[0][0], MAIN_MENU_PROMPT)
+        self.assertIn("🖥 Server", flattened)
+
+    def test_after_apache_command_shows_web_logs_submenu(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry(apache_error_summary=ToolSpec("apache_error_summary", "Apache", "Apache", lambda context: {"summary_text": "apache ok"}, "apache_error_summary"))
+        config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+
+        result = handle_update(
+            conn=conn,
+            registry=registry,
+            config=config,
+            token="token",
+            update={"message": {"text": "/apache", "from": {"id": 123}, "chat": {"id": 456}}},
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        flattened = [command for row in sent[1][1]["keyboard"] for command in row]
+        self.assertEqual(result["tool_key"], "apache_error_summary")
+        self.assertEqual(sent[0], ("apache ok", None))
+        self.assertIn("/nginx", flattened)
+        self.assertIn("/apache", flattened)
+        self.assertNotIn("/queue", flattened)
+
+    def test_after_queue_command_shows_workers_submenu(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry(queue_workers_summary=ToolSpec("queue_workers_summary", "Queue", "Queue", lambda context: {"summary_text": "queue ok"}, "queue_workers_summary"))
+        config = {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
+
+        result = handle_update(
+            conn=conn,
+            registry=registry,
+            config=config,
+            token="token",
+            update={"message": {"text": "/queue", "from": {"id": 123}, "chat": {"id": 456}}},
+            send_func=lambda token, chat_id, text, reply_markup=None: sent.append((text, reply_markup)),
+        )
+
+        flattened = [command for row in sent[1][1]["keyboard"] for command in row]
+        self.assertEqual(result["tool_key"], "queue_workers_summary")
+        self.assertEqual(sent[0], ("queue ok", None))
+        self.assertIn("/queue", flattened)
+        self.assertIn("/supervisor", flattened)
+        self.assertNotIn("/apache", flattened)
 
     def test_unknown_command_sends_error_then_menu_without_unauthorized_leak(self):
         conn = db.connect(":memory:")
@@ -240,8 +357,7 @@ class TelegramTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "ignored")
-        self.assertEqual(sent[0], ("الأمر غير معروف.", None))
-        self.assertEqual(sent[1], (MENU_PROMPT, command_keyboard(telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
+        self.assertEqual(sent[0], ("أمر غير معروف. اختر من القائمة:", command_keyboard(telegram_registry(), {"telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}})))
 
     def test_poll_once_updates_offset_and_dispatches(self):
         conn = db.connect(":memory:")

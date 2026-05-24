@@ -33,7 +33,19 @@ COMMAND_TO_TOOL = {
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_OFFSET_KEY = "telegram.next_update_offset"
-MENU_PROMPT = "اختر أمرًا آخر:"
+MAIN_MENU_PROMPT = "اختر قسمًا:"
+SUBMENU_PROMPT = "اختر أمرًا:"
+UNKNOWN_COMMAND_TEXT = "أمر غير معروف. اختر من القائمة:"
+BACK_BUTTON = "⬅️ Back"
+MENU_GROUPS = {
+    "🖥 Server": ["/status", "/performance", "/disk", "/services", "/top"],
+    "🌐 Web / Logs": ["/nginx", "/apache", "/5xx"],
+    "🧩 Laravel": ["/laravel", "/laravel-log", "/laravel-env", "/laravel-exceptions"],
+    "⚙️ Workers": ["/queue", "/supervisor"],
+    "🔐 Security": ["/cron", "/suspicious"],
+    "📄 Reports": ["/report", "/help"],
+}
+MENU_PROMPT = SUBMENU_PROMPT
 COMMAND_DESCRIPTIONS = {
     "/status": "حالة السيرفر العامة",
     "/performance": "أداء السيرفر والخدمات",
@@ -58,25 +70,50 @@ COMMAND_ORDER = ["/status", "/report", "/performance", "/services", "/disk", "/t
 
 
 def build_help_text(registry: dict[str, Any], config: dict[str, Any]) -> str:
-    lines = ["مرحبًا بك في Matrix Scanner.", "", "الأوامر المتاحة:"]
-    lines.extend(f"{command} - {COMMAND_DESCRIPTIONS.get(command, 'أمر متاح')}" for command in available_commands(registry, config))
-    return "\n".join(lines)
+    return "مرحبًا بك في Matrix Scanner.\n\nاختر قسمًا من القائمة."
 
 
 def command_keyboard(registry: dict[str, Any] | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    commands = available_commands(registry or {}, config or {})
+    groups = available_menu_groups(registry or {}, config or {})
     return {
-        "keyboard": [commands[index:index + 2] for index in range(0, len(commands), 2)],
+        "keyboard": [groups[index:index + 2] for index in range(0, len(groups), 2)],
         "resize_keyboard": True,
         "one_time_keyboard": False,
         "is_persistent": True,
     }
 
 
+def submenu_keyboard(group_name: str, registry: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    commands = available_group_commands(group_name, registry, config)
+    rows = [commands[index:index + 2] for index in range(0, len(commands), 2)]
+    rows.append([BACK_BUTTON])
+    return {
+        "keyboard": rows,
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "is_persistent": True,
+    }
+
+
+def available_menu_groups(registry: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    return [group for group in MENU_GROUPS if available_group_commands(group, registry, config)]
+
+
+def available_group_commands(group_name: str, registry: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    return [command for command in MENU_GROUPS.get(group_name, []) if _is_command_visible(command, registry, config)]
+
+
 def available_commands(registry: dict[str, Any], config: dict[str, Any]) -> list[str]:
     commands = [command for command in COMMAND_ORDER if command == "/help" or command in COMMAND_TO_TOOL]
     extras = sorted(command for command in COMMAND_TO_TOOL if command not in commands)
     return [command for command in commands + extras if _is_command_visible(command, registry, config)]
+
+
+def command_group_for_command(command: str, registry: dict[str, Any], config: dict[str, Any]) -> str | None:
+    for group, commands in MENU_GROUPS.items():
+        if command in commands and command in available_group_commands(group, registry, config):
+            return group
+    return None
 
 
 def map_command(text: str) -> str | None:
@@ -139,13 +176,19 @@ def handle_update(
     if not is_update_allowed(config, update):
         return {"status": "denied", "reason": "unauthorized", "chat_id": chat_id, "user_id": user_id}
 
+    if text == BACK_BUTTON:
+        _send_with_keyboard(send_func, token, chat_id, MAIN_MENU_PROMPT, registry, config)
+        return {"status": "handled", "tool_key": "menu", "chat_id": chat_id, "user_id": user_id}
+    if text in MENU_GROUPS:
+        _send_submenu(send_func, token, chat_id, text, registry, config)
+        return {"status": "handled", "tool_key": "menu", "group": text, "chat_id": chat_id, "user_id": user_id}
+
     tool_key = map_command(text)
     if _is_help_command(text):
         _send_with_keyboard(send_func, token, chat_id, build_help_text(registry, config), registry, config)
         return {"status": "handled", "tool_key": "help", "chat_id": chat_id, "user_id": user_id}
     if tool_key is None:
-        _send_plain(send_func, token, chat_id, "الأمر غير معروف.")
-        _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT, registry, config)
+        _send_with_keyboard(send_func, token, chat_id, UNKNOWN_COMMAND_TEXT, registry, config)
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
@@ -160,7 +203,11 @@ def handle_update(
     )
     response_text = format_tool_response(result)
     _send_plain(send_func, token, chat_id, response_text)
-    _send_with_keyboard(send_func, token, chat_id, MENU_PROMPT, registry, config)
+    group = command_group_for_command(text.strip().split()[0].lower(), registry, config)
+    if group:
+        _send_submenu(send_func, token, chat_id, group, registry, config)
+    else:
+        _send_with_keyboard(send_func, token, chat_id, MAIN_MENU_PROMPT, registry, config)
     return {"status": "handled", "tool_key": tool_key, "result_ok": bool(result.get("ok"))}
 
 
@@ -240,7 +287,7 @@ def save_next_update_offset(conn, offset: int) -> None:
 
 def _is_help_command(text: str) -> bool:
     command = text.strip().split()[0].lower() if text.strip() else ""
-    return command in {"/start", "/help"}
+    return command in {"/start", "/help", "/menu"}
 
 
 def _send_plain(send_func, token: str, chat_id: int | str, text: str) -> None:
@@ -252,6 +299,13 @@ def _send_with_keyboard(send_func, token: str, chat_id: int | str, text: str, re
         send_func(token, chat_id, text, reply_markup=command_keyboard(registry, config))
     except TypeError:
         send_func(token, chat_id, text)
+
+
+def _send_submenu(send_func, token: str, chat_id: int | str, group: str, registry: dict[str, Any], config: dict[str, Any]) -> None:
+    try:
+        send_func(token, chat_id, SUBMENU_PROMPT, reply_markup=submenu_keyboard(group, registry, config))
+    except TypeError:
+        send_func(token, chat_id, SUBMENU_PROMPT)
 
 
 def _is_command_visible(command: str, registry: dict[str, Any], config: dict[str, Any]) -> bool:
