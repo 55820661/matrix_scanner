@@ -29,7 +29,7 @@ def run_scan(conn, config: dict[str, Any], *, telegram_token: str | None = None,
     alerts = evaluate_alerts(raw, config.get("thresholds", {}))
     if config.get("incident_alerts_enabled", False):
         raw["incident"] = collect_incident_scan(config)
-        alerts.extend(evaluate_incident_alerts(raw))
+        alerts.extend(evaluate_incident_alerts(raw, recent_minutes=as_int(config.get("incident_alert_recent_minutes", 60), 60)))
     alerts_to_store = filter_alerts_for_cooldown(conn, alerts, int(config.get("alert_cooldown_minutes", 360))) if config.get("alerts_enabled", True) else []
     finished = datetime.now(timezone.utc)
     scan_id = db.insert_scan_result(

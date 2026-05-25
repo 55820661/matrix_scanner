@@ -223,6 +223,48 @@ class DbAndSchedulerTests(unittest.TestCase):
         self.assertEqual(result["alerts"][0]["alert_key"], "incident.cron.suspicious")
         self.assertIn("Suspicious cron entries detected", sent[0])
 
+    def test_scan_does_not_send_old_apache_5xx_incident_alert(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        config = {
+            "alerts_enabled": True,
+            "incident_alerts_enabled": True,
+            "incident_alert_recent_minutes": 60,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 101, "cpu_percent": 101, "ram_percent": 101},
+            "alert_cooldown_minutes": 360,
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 1}}, "services": {}}
+        incident_scan = {"apache_5xx": {"rows": [{"status": "500", "endpoint": "/", "domain": "example.com", "count": 5, "recent_1h_count": 0, "recent_24h_count": 0, "latest_timestamp": "2022-01-01 00:00:00 UTC"}]}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            with mock.patch("matrix_scanner.scheduler.collect_incident_scan", return_value=incident_scan):
+                result = run_scan(conn, config, telegram_token="token", alert_send_func=lambda *args: self.fail("send should not run"))
+
+        self.assertEqual(result["alerts"], [])
+
+    def test_scan_does_not_send_old_sql_deadlock_incident_alert(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        config = {
+            "alerts_enabled": True,
+            "incident_alerts_enabled": True,
+            "incident_alert_recent_minutes": 60,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 101, "cpu_percent": 101, "ram_percent": 101},
+            "alert_cooldown_minutes": 360,
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 1}}, "services": {}}
+        incident_scan = {"laravel_exceptions": {"groups": [{"type": "sql_deadlock", "title": "SQL deadlock", "count": 1, "recent_1h_count": 0, "latest_timestamp": "2022-01-01 00:00:00"}]}}
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            with mock.patch("matrix_scanner.scheduler.collect_incident_scan", return_value=incident_scan):
+                result = run_scan(conn, config, telegram_token="token", alert_send_func=lambda *args: self.fail("send should not run"))
+
+        self.assertEqual(result["alerts"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

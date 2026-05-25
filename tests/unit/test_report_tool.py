@@ -69,6 +69,15 @@ class ReportToolTests(unittest.TestCase):
 
         self.assertIn("- لا توجد مشاكل حسب القواعد الحالية.", text)
 
+    def test_report_does_not_say_no_issues_when_incident_notes_exist(self):
+        scan = dict(SAMPLE_SCAN)
+        scan["incident"] = {"apache_5xx": {"rows": [{"status": "500", "endpoint": "/", "count": 1, "latest_timestamp": "2022-01-01 00:00:00 UTC"}]}}
+
+        text = full_report(scan, [], {"services": ["service-1"]})
+
+        self.assertIn("توجد ملاحظات للمراقبة", text)
+        self.assertNotIn("لا توجد مشاكل حسب القواعد الحالية", text)
+
     def test_generate_report_uses_configured_services(self):
         result = generate_report({"config": {"services": ["service-1"], "thresholds": {}}, "scan": SAMPLE_SCAN})
 

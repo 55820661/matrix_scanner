@@ -12,6 +12,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "metrics_retention_days": 14,
     "alerts_enabled": True,
     "incident_alerts_enabled": True,
+    "incident_alert_recent_minutes": 60,
     "telegram_enabled": False,
     "confirmation_timeout_seconds": 120,
     "laravel": {

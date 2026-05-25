@@ -302,6 +302,7 @@ def build_config_yaml(
         "alerts_enabled: true",
         "alert_cooldown_minutes: 360",
         "incident_alerts_enabled: true",
+        "incident_alert_recent_minutes: 60",
         "telegram_enabled: false",
         "confirmation_timeout_seconds: 120",
         "",

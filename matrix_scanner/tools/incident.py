@@ -104,6 +104,7 @@ def _groups(groups: list[dict[str, Any]]) -> str:
             f"  explanation: {group['explanation']}",
             f"  suggested_action: {group['suggested_action']}",
         ])
+    lines.append("Timezone note: Apache timestamps are normalized to UTC when possible.")
     return "\n".join(lines)
 
 
@@ -125,6 +126,7 @@ def _apache_5xx_rows(rows: list[dict[str, Any]]) -> str:
             f"  evaluation: {row.get('evaluation', '-')}",
             f"  message: {row.get('message', '-')}",
         ])
+    lines.append("Timezone note: Apache timestamps are normalized to UTC when possible.")
     return "\n".join(lines)
 
 
@@ -139,6 +141,7 @@ def _exceptions(groups: list[dict[str, Any]]) -> str:
             f"  probable_cause: {group['probable_cause']}",
             f"  suggested_action: {group['suggested_action']}",
         ])
+    lines.append("Timezone note: Laravel timestamps are shown as written in the application log.")
     return "\n".join(lines)
 
 

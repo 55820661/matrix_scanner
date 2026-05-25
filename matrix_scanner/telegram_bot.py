@@ -190,6 +190,10 @@ def handle_update(
     if tool_key is None:
         _send_with_keyboard(send_func, token, chat_id, UNKNOWN_COMMAND_TEXT, registry, config)
         return {"status": "ignored", "reason": "unknown_command", "chat_id": chat_id, "user_id": user_id}
+    spec = registry.get(tool_key)
+    if spec and spec.type == "action" and not _is_explicit_allowed_user(config, user_id):
+        _send_with_keyboard(send_func, token, chat_id, "هذا الأمر يتطلب صلاحية مستخدم مباشرة وليس صلاحية جروب فقط.", registry, config)
+        return {"status": "denied", "reason": "action_requires_allowed_user", "chat_id": chat_id, "user_id": user_id}
 
     principal = Principal(id=None, telegram_user_id=user_id, telegram_chat_id=chat_id, role="admin")
     result = execute_tool(
@@ -321,9 +325,40 @@ def _is_command_visible(command: str, registry: dict[str, Any], config: dict[str
         return False
     if spec.type == "action" and not bool(config.get("approved_fix", False)):
         return False
+    if spec.type == "action" and not _has_allowed_users(config):
+        return False
     if spec.requires_confirmation and not bool(config.get("approved_fix", False)):
+        return False
+    if command == "/nginx" and not _nginx_configured(config):
         return False
     current_mode = str(config.get("current_mode", "read_only"))
     if current_mode not in spec.allowed_modes:
         return False
     return True
+
+
+def _nginx_configured(config: dict[str, Any]) -> bool:
+    if "logs" not in config:
+        return True
+    logs = config.get("logs", {})
+    if not isinstance(logs, dict):
+        return False
+    return bool(_as_non_empty_str(logs.get("nginx_access")) or _as_non_empty_str(logs.get("nginx_error")))
+
+
+def _as_non_empty_str(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _has_allowed_users(config: dict[str, Any]) -> bool:
+    return bool((config.get("telegram", {}) or {}).get("allowed_user_ids"))
+
+
+def _is_explicit_allowed_user(config: dict[str, Any], user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    try:
+        allowed = {int(value) for value in (config.get("telegram", {}) or {}).get("allowed_user_ids", [])}
+    except (TypeError, ValueError):
+        return False
+    return int(user_id) in allowed

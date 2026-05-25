@@ -42,7 +42,7 @@ def full_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = None
         "المشاكل المكتشفة:",
     ]
     if not alerts:
-        lines.append("- لا توجد مشاكل حسب القواعد الحالية.")
+        lines.append(_no_alerts_text(scan))
     for alert in alerts:
         lines.extend([
             f"- [{alert['severity']}] {alert['title']}",
@@ -68,7 +68,7 @@ def telegram_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = 
         "المشاكل المكتشفة:",
     ]
     if not alerts:
-        lines.append("- لا توجد مشاكل حسب القواعد الحالية.")
+        lines.append(_no_alerts_text(scan))
     for alert in alerts:
         lines.extend([
             f"- [{alert['severity']}] {alert['title']}",
@@ -107,6 +107,7 @@ def _incident_sections(scan: dict[str, Any]) -> str:
         lines.append(f"- suspicious cron findings: {len(cron)}")
     if files:
         lines.append(f"- suspicious file findings: {len(files)}")
+    lines.extend(["", "Timezone note", "- Apache timestamps are normalized to UTC when possible. Laravel timestamps are shown as written in the application log."])
     return "\n".join(lines)
 
 
@@ -121,6 +122,30 @@ def _fmt(value: Any) -> str:
     if value is None:
         return "غير متاح"
     return f"{value}%"
+
+
+def _no_alerts_text(scan: dict[str, Any]) -> str:
+    if _has_incident_notes(scan):
+        return "- توجد ملاحظات للمراقبة في أقسام الفحص، ولا توجد مشاكل حرجة حديثة حسب قواعد التنبيه الحالية."
+    return "- لا توجد مشاكل حسب القواعد الحالية."
+
+
+def _has_incident_notes(scan: dict[str, Any]) -> bool:
+    incident = scan.get("incident", {})
+    if not incident:
+        return False
+    return any(
+        [
+            incident.get("apache_errors", {}).get("groups"),
+            incident.get("apache_5xx", {}).get("rows"),
+            incident.get("laravel_log_health", {}).get("rows"),
+            incident.get("laravel_exceptions", {}).get("groups"),
+            incident.get("queue_workers", {}).get("groups"),
+            incident.get("queue_workers", {}).get("warnings"),
+            incident.get("suspicious_cron", {}).get("findings"),
+            incident.get("suspicious_files", {}).get("findings"),
+        ]
+    )
 
 
 def _overall_status(performance: dict[str, Any], alerts: list[dict[str, Any]]) -> str:

@@ -227,6 +227,14 @@ class TelegramTests(unittest.TestCase):
         self.assertNotIn("/nginx", flattened)
         self.assertNotIn("/nginx", submenu)
 
+    def test_nginx_hidden_when_paths_are_not_configured(self):
+        config = {"logs": {"nginx_access": "", "nginx_error": ""}, "telegram": {"allowed_user_ids": [], "allowed_chat_ids": [-100]}}
+
+        commands = available_commands(telegram_registry(), config)
+
+        self.assertNotIn("/nginx", commands)
+        self.assertIn("/apache", commands)
+
     def test_action_command_is_hidden_without_approved_fix(self):
         registry = telegram_registry(restart_service=tool("restart_service", type="action"))
         config = {"approved_fix": False, "telegram": {"allowed_user_ids": [123], "allowed_chat_ids": []}}
@@ -237,6 +245,34 @@ class TelegramTests(unittest.TestCase):
 
         self.assertNotIn("/restart", text)
         self.assertNotIn("/restart", flattened)
+
+    def test_action_command_hidden_for_group_only_permission(self):
+        registry = telegram_registry(restart_service=tool("restart_service", type="action"))
+        config = {"approved_fix": True, "telegram": {"allowed_user_ids": [], "allowed_chat_ids": [-100]}}
+
+        with patch.dict("matrix_scanner.telegram_bot.COMMAND_TO_TOOL", {"/restart": "restart_service"}, clear=False):
+            commands = available_commands(registry, config)
+
+        self.assertNotIn("/restart", commands)
+
+    def test_action_command_denied_for_group_member_without_allowed_user(self):
+        conn = db.connect(":memory:")
+        sent = []
+        registry = telegram_registry(restart_service=ToolSpec("restart_service", "Restart", "Restart", lambda context: {"summary_text": "restarted"}, "restart_service", type="action", allowed_modes=("read_only", "diagnostic")))
+        config = {"approved_fix": True, "telegram": {"allowed_user_ids": [], "allowed_chat_ids": [-100]}}
+
+        with patch.dict("matrix_scanner.telegram_bot.COMMAND_TO_TOOL", {"/restart": "restart_service"}, clear=False):
+            result = handle_update(
+                conn=conn,
+                registry=registry,
+                config=config,
+                token="token",
+                update={"message": {"text": "/restart", "from": {"id": 123}, "chat": {"id": -100}}},
+                send_func=lambda token, chat_id, text, reply_markup=None: sent.append(text),
+            )
+
+        self.assertEqual(result["reason"], "action_requires_allowed_user")
+        self.assertIn("صلاحية مستخدم مباشرة", sent[0])
 
     def test_server_group_selection_displays_server_commands_only(self):
         conn = db.connect(":memory:")
