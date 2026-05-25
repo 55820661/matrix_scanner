@@ -83,6 +83,7 @@ class ReportToolTests(unittest.TestCase):
 
         self.assertIn("| service-1 | running | يعمل |", result["report_text"])
         self.assertNotIn("unconfigured-service", result["report_text"])
+        self.assertNotIn("incident", SAMPLE_SCAN)
 
     def test_report_command_in_telegram_uses_structured_format(self):
         conn = db.connect(":memory:")

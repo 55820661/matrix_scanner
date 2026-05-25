@@ -6,7 +6,7 @@ from matrix_scanner.scheduler import collect_incident_scan, collect_scan
 
 
 def generate_report(context: dict) -> dict:
-    scan = context.get("scan") or collect_scan(context["config"])
+    scan = dict(context.get("scan") or collect_scan(context["config"]))
     if "incident" not in scan:
         scan["incident"] = collect_incident_scan(context["config"])
     alerts = evaluate_alerts(_scan_for_configured_services(scan, context["config"].get("services", [])), context["config"].get("thresholds", {}))
