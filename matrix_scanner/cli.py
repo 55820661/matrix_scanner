@@ -12,7 +12,7 @@ from matrix_scanner import db
 from matrix_scanner.config import load_config
 from matrix_scanner.scheduler import run_scan
 from matrix_scanner.setup import run_interactive_setup
-from matrix_scanner.telegram_bot import run_long_polling, send_message
+from matrix_scanner.telegram_bot import TelegramPollingConflict, run_long_polling, send_message
 from matrix_scanner.tool_executor import execute_tool
 from matrix_scanner.tool_registry import build_registry
 
@@ -140,6 +140,10 @@ def _telegram_bot(app_config, conn, registry, stop_after: int | None = None) -> 
     try:
         run_long_polling(conn=conn, registry=registry, config=app_config.values, token=token, stop_after=stop_after, stop_event=stop_event)
         return 0
+    except TelegramPollingConflict as exc:
+        print(str(exc), file=sys.stderr)
+        print("Stop the existing telegram-bot service/process before starting another long polling instance.", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\nTelegram bot stopped.")
         return 130

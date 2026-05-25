@@ -4,6 +4,7 @@ import json
 import time
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError
 from threading import Event
 from typing import Any
 
@@ -67,6 +68,10 @@ COMMAND_DESCRIPTIONS = {
     "/help": "عرض القائمة",
 }
 COMMAND_ORDER = ["/status", "/report", "/performance", "/services", "/disk", "/top", "/apache", "/5xx", "/nginx", "/laravel", "/laravel-log", "/laravel-env", "/laravel-exceptions", "/queue", "/supervisor", "/cron", "/suspicious", "/help"]
+
+
+class TelegramPollingConflict(RuntimeError):
+    """Raised when Telegram rejects long polling because another instance is active."""
 
 
 def build_help_text(registry: dict[str, Any], config: dict[str, Any]) -> str:
@@ -137,8 +142,13 @@ def get_updates(token: str, offset: int | None = None, timeout: int = 30) -> dic
     if offset is not None:
         params["offset"] = offset
     url = f"https://api.telegram.org/bot{token}/getUpdates?{urllib.parse.urlencode(params)}"
-    with urllib.request.urlopen(url, timeout=timeout + 5) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=timeout + 5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code == 409:
+            raise TelegramPollingConflict("Telegram polling conflict: another bot instance is already running.") from exc
+        raise
 
 
 def is_update_allowed(config: dict[str, Any], update: dict[str, Any]) -> bool:

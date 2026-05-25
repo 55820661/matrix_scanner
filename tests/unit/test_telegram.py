@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from matrix_scanner import db
 from matrix_scanner.cli import _telegram_bot
-from matrix_scanner.telegram_bot import BACK_BUTTON, MAIN_MENU_PROMPT, MENU_PROMPT, SUBMENU_PROMPT, available_commands, build_help_text, command_keyboard, format_tool_response, handle_update, is_update_allowed, map_command, poll_once, submenu_keyboard
+from matrix_scanner.telegram_bot import BACK_BUTTON, MAIN_MENU_PROMPT, MENU_PROMPT, SUBMENU_PROMPT, TelegramPollingConflict, available_commands, build_help_text, command_keyboard, format_tool_response, handle_update, is_update_allowed, map_command, poll_once, submenu_keyboard
 from matrix_scanner.telegram_bot import run_long_polling
 from matrix_scanner.tool_registry import ToolSpec
 
@@ -471,6 +471,19 @@ class TelegramTests(unittest.TestCase):
 
         self.assertEqual(code, 130)
         self.assertIn("Telegram bot stopped.", stdout.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_telegram_bot_polling_conflict_stops_without_traceback(self):
+        app_config = SimpleNamespace(telegram_bot_token="token", values={})
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch("matrix_scanner.cli.run_long_polling", side_effect=TelegramPollingConflict("Telegram polling conflict: another bot instance is already running.")), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = _telegram_bot(app_config, db.connect(":memory:"), {})
+
+        self.assertEqual(code, 1)
+        self.assertIn("another bot instance is already running", stderr.getvalue())
         self.assertNotIn("Traceback", stdout.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
