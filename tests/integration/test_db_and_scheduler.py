@@ -193,6 +193,36 @@ class DbAndSchedulerTests(unittest.TestCase):
         self.assertEqual(result["notification"]["sent"], 0)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0], 0)
 
+    def test_scan_converts_suspicious_cron_to_incident_alert(self):
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        sent = []
+        config = {
+            "alerts_enabled": True,
+            "incident_alerts_enabled": True,
+            "telegram_enabled": True,
+            "telegram": {"default_chat_id": 456},
+            "thresholds": {"disk_percent": 101, "cpu_percent": 101, "ram_percent": 101},
+            "alert_cooldown_minutes": 360,
+        }
+        raw = {"system": {"cpu_percent": 1, "ram": {"used_percent": 1}, "disk": {"used_percent": 1}}, "services": {}}
+        incident_scan = {
+            "suspicious_cron": {"findings": [{"path": "root", "reasons": "base64"}]},
+            "suspicious_files": {"findings": []},
+            "laravel_exceptions": {"groups": []},
+            "laravel_log_health": {"rows": []},
+            "apache_5xx": {"rows": []},
+            "apache_errors": {"groups": []},
+            "queue_workers": {"warnings": []},
+        }
+
+        with mock.patch("matrix_scanner.scheduler.collect_scan", return_value=raw):
+            with mock.patch("matrix_scanner.scheduler.collect_incident_scan", return_value=incident_scan):
+                result = run_scan(conn, config, telegram_token="token", alert_send_func=lambda token, chat_id, text: sent.append(text))
+
+        self.assertEqual(result["alerts"][0]["alert_key"], "incident.cron.suspicious")
+        self.assertIn("Suspicious cron entries detected", sent[0])
+
 
 if __name__ == "__main__":
     unittest.main()

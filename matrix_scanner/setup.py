@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -48,18 +49,32 @@ EXCLUDED_SERVICE_NAMES = {
     "dpkg-db-backup",
     "networking",
     "dbus",
-    "cron",
-    "ssh",
     "ufw",
     "qemu-guest-agent",
+}
+
+CORE_SERVICE_NAMES = {
+    "mysqld",
+    "mariadb",
+    "mysql",
+    "crond",
+    "sshd",
+    "httpd",
+    "nginx",
+    "supervisord",
+    "queueprocd",
 }
 
 IMPORTANT_SERVICE_NAMES = {
     "nginx",
     "apache2",
     "httpd",
+    "mysqld",
     "mysql",
     "mariadb",
+    "crond",
+    "sshd",
+    "queueprocd",
     "postgresql",
     "redis",
     "php-fpm",
@@ -69,6 +84,18 @@ IMPORTANT_SERVICE_NAMES = {
     "supervisor",
     "supervisord",
     "docker",
+}
+
+PROCESS_SERVICE_TOKENS = {
+    "mysqld": ("mysqld",),
+    "mariadb": ("mariadbd", "mysqld"),
+    "mysql": ("mysqld", "mariadbd"),
+    "crond": ("crond",),
+    "sshd": ("sshd",),
+    "httpd": ("httpd", "apache2"),
+    "nginx": ("nginx",),
+    "supervisord": ("supervisord",),
+    "queueprocd": ("queueprocd",),
 }
 
 APP_EXEC_TOKENS = (
@@ -147,6 +174,48 @@ def is_candidate_application_service(service: ServiceInfo) -> bool:
     return False
 
 
+def discover_critical_services() -> list[ServiceInfo]:
+    services: list[ServiceInfo] = []
+    process_text = _process_list_text()
+    for name in sorted(CORE_SERVICE_NAMES):
+        state = _systemd_active_state(name)
+        if state == "active":
+            services.append(ServiceInfo(name=name, description="Core service", active_state="active"))
+            continue
+        if _process_matches_service(name, process_text):
+            services.append(ServiceInfo(name=name, description="Core service detected from process list", active_state="active"))
+    return services
+
+
+def _systemd_active_state(name: str) -> str:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return ""
+    try:
+        proc = subprocess.run([systemctl, "is-active", name], capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _process_list_text() -> str:
+    ps = shutil.which("ps")
+    if ps is None:
+        return ""
+    try:
+        proc = subprocess.run([ps, "-eo", "comm,args"], capture_output=True, text=True, timeout=4, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _process_matches_service(name: str, process_text: str) -> bool:
+    if not process_text:
+        return False
+    tokens = PROCESS_SERVICE_TOKENS.get(name, (name,))
+    return any(re.search(rf"(^|\s|/){re.escape(token)}(\s|$)", process_text, re.MULTILINE) for token in tokens)
+
+
 def enrich_service_metadata(service: ServiceInfo) -> ServiceInfo:
     systemctl = shutil.which("systemctl")
     if systemctl is None:
@@ -219,6 +288,8 @@ def build_config_yaml(
     nginx_access_log: str,
     nginx_error_log: str,
     logs_max_lines: int,
+    apache_error_log: str = "",
+    apache_domlogs_dir: str = "",
 ) -> str:
     applications = applications or []
     laravel_app = next((app for app in applications if app.type == "laravel"), None)
@@ -230,6 +301,7 @@ def build_config_yaml(
         "metrics_retention_days: 14",
         "alerts_enabled: true",
         "alert_cooldown_minutes: 360",
+        "incident_alerts_enabled: true",
         "telegram_enabled: false",
         "confirmation_timeout_seconds: 120",
         "",
@@ -270,6 +342,14 @@ def build_config_yaml(
             f"  nginx_access: {nginx_access_log}",
             f"  nginx_error: {nginx_error_log}",
             f"  max_lines: {logs_max_lines}",
+            "",
+            "apache:",
+            "  error_logs:",
+            f"    - {apache_error_log}",
+            "  domlogs:",
+            f"    - {apache_domlogs_dir}",
+            "  access_logs:",
+            f"    - {apache_domlogs_dir}",
             "",
             "php_fpm:",
             "  service_name: php-fpm",
@@ -340,7 +420,7 @@ def discover_cpanel_laravel_apps(base: str = "/home") -> list[ApplicationInfo]:
     if not home.exists():
         return []
     candidates = []
-    for pattern in ("*/public_html", "*/public_html/*"):
+    for pattern in ("*/public_html", "*/public_html/*", "*/public_html/public/*"):
         candidates.extend(home.glob(pattern))
     applications = []
     for path in candidates:
@@ -371,8 +451,7 @@ def detect_application_log_path(app_type: str, app_path: Path) -> str:
     log_dir = app_path / "storage" / "logs"
     if not log_dir.exists():
         return ""
-    laravel_log = log_dir / "laravel.log"
-    return str(laravel_log) if laravel_log.exists() else str(log_dir)
+    return str(log_dir)
 
 
 def run_interactive_setup(
@@ -383,11 +462,11 @@ def run_interactive_setup(
     include_inactive: bool = False,
     input_func: Callable[[str], str] = input,
 ) -> bool:
-    discovered = discover_systemd_services()
+    discovered = _merge_services(discover_systemd_services(), discover_critical_services())
     enriched_discovered = [enrich_service_metadata(service) for service in discovered]
     services = filter_setup_services(enriched_discovered, all_services=all_services, include_inactive=include_inactive)
     if services:
-        print("All systemd services:" if all_services else "Candidate application services:")
+        print("All systemd services:" if all_services else "Candidate services:")
         for index, service in enumerate(services, start=1):
             suffix = f" - {service.description}" if service.description else ""
             state = f" [{service.active_state}]" if service.active_state else ""
@@ -401,6 +480,8 @@ def run_interactive_setup(
     applications = detect_applications(enriched)
     nginx_access = detect_nginx_log_path("/var/log/nginx/access.log")
     nginx_error = detect_nginx_log_path("/var/log/nginx/error.log")
+    apache_error = detect_existing_path("/etc/apache2/logs/error_log") or detect_existing_path("/usr/local/apache/logs/error_log") or detect_existing_path("/var/log/httpd/error_log")
+    apache_domlogs = detect_existing_path("/etc/apache2/logs/domlogs") or detect_existing_path("/usr/local/apache/domlogs")
     database_path = "data/matrix_scanner.sqlite3"
     max_lines = 500
 
@@ -411,8 +492,14 @@ def run_interactive_setup(
         nginx_access_log=nginx_access,
         nginx_error_log=nginx_error,
         logs_max_lines=max_lines,
+        apache_error_log=apache_error,
+        apache_domlogs_dir=apache_domlogs,
     )
     return write_config(config_path, content, force=force, confirm=input_func)
+
+
+def detect_existing_path(path: str) -> str:
+    return path if Path(path).exists() else ""
 
 
 def _strip_service_suffix(name: str) -> str:
@@ -427,6 +514,16 @@ def _dedupe(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def _merge_services(*groups: list[ServiceInfo]) -> list[ServiceInfo]:
+    merged: dict[str, ServiceInfo] = {}
+    for group in groups:
+        for service in group:
+            existing = merged.get(service.name)
+            if existing is None or (existing.active_state != "active" and service.active_state == "active"):
+                merged[service.name] = service
+    return sorted(merged.values(), key=lambda item: (item.active_state != "active", item.name))
 
 
 def _dedupe_applications(applications: list[ApplicationInfo]) -> list[ApplicationInfo]:

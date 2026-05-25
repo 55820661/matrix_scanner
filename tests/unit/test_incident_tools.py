@@ -82,7 +82,7 @@ class IncidentToolsTests(unittest.TestCase):
             '198.51.100.2 - - [24/May/2026:10:00:01 +0000] "GET /api/a HTTP/1.1" 502 12 "-" "UA2"',
             '198.51.100.3 - - [24/May/2026:10:00:02 +0000] "POST /api/b HTTP/1.1" 504 12 "-" "UA3"',
         ]
-        with patch("matrix_scanner.scanners.incident._read_many_logs", return_value=lines):
+        with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=[("domlog", line) for line in lines]):
             result = incident.apache_5xx_summary(["domlog"], 100)
 
         endpoints = {(row["status"], row["endpoint"]): row["count"] for row in result["rows"]}
@@ -90,13 +90,26 @@ class IncidentToolsTests(unittest.TestCase):
         self.assertEqual(endpoints[("502", "/api/a")], 1)
         self.assertEqual(endpoints[("504", "/api/b")], 1)
 
+    def test_apache_5xx_summary_reads_multiple_domlogs(self):
+        lines = [
+            ("/etc/apache2/logs/domlogs/example.com", '198.51.100.1 - - [24/May/2026:10:00:00 +0000] "GET /api/a?x=1 HTTP/1.1" 500 12 "-" "UA1"'),
+            ("/etc/apache2/logs/domlogs/example.com-ssl_log", '198.51.100.2 - - [24/May/2026:10:01:00 +0000] "GET /api/a HTTP/1.1" 500 12 "-" "UA2"'),
+        ]
+        with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=lines):
+            result = incident.apache_5xx_summary(["/etc/apache2/logs/domlogs"], 100)
+
+        row = result["rows"][0]
+        self.assertEqual(row["endpoint"], "/api/a")
+        self.assertEqual(row["domain"], "example.com")
+        self.assertEqual(row["latest_timestamp"], "24/May/2026:10:01:00 +0000")
+
     def test_laravel_exception_summary_classifies_common_errors(self):
         lines = [
             "[2026-05-24 10:00:00] production.ERROR: JWT invalid token Bearer null",
             "[2026-05-24 10:00:01] production.ERROR: SQLSTATE[40001]: Deadlock found",
             "[2026-05-24 10:00:02] production.ERROR: SQLSTATE[42S22]: Unknown column 'foo'",
         ]
-        with patch("matrix_scanner.scanners.incident._laravel_log_paths", return_value=["laravel.log"]):
+        with patch("matrix_scanner.scanners.incident._laravel_log_paths_with_apps", return_value=[{"app_path": "/app", "log_path": "laravel.log"}]):
             with patch("matrix_scanner.scanners.incident._tail_lines", return_value=lines):
                 result = incident.laravel_exception_summary({}, 100)
 
@@ -104,6 +117,31 @@ class IncidentToolsTests(unittest.TestCase):
         self.assertIn("jwt_invalid_token", types)
         self.assertIn("sql_deadlock", types)
         self.assertIn("unknown_column", types)
+
+    def test_laravel_exception_summary_extracts_latest_timestamp(self):
+        lines = [
+            "[2026-05-24 10:00:00] production.ERROR: JWT invalid token Bearer null",
+            "#0 /app/vendor/framework.php",
+            "[2026-05-24 10:15:00] production.ERROR: JWT invalid token Bearer null",
+        ]
+        with patch("matrix_scanner.scanners.incident._laravel_log_paths_with_apps", return_value=[{"app_path": "/home/user/public_html", "log_path": "laravel.log"}]):
+            with patch("matrix_scanner.scanners.incident._tail_lines", return_value=lines):
+                result = incident.laravel_exception_summary({}, 100)
+
+        group = result["groups"][0]
+        self.assertEqual(group["latest_timestamp"], "2026-05-24 10:15:00")
+        self.assertEqual(group["affected_app_paths"], {"/home/user/public_html": 2})
+
+    def test_queue_workers_summary_warns_multiple_database_workers_same_app(self):
+        rows = [
+            {"pid": "1", "user": "innvi", "args": "php /home/innvi/public_html/artisan queue:work database"},
+            {"pid": "2", "user": "innvi", "args": "php /home/innvi/public_html/artisan queue:work database"},
+        ]
+        with patch("matrix_scanner.scanners.incident.top_processes", return_value={"rows": rows}):
+            result = incident.queue_workers_summary()
+
+        self.assertEqual(result["groups"][0]["count"], 2)
+        self.assertTrue(any("Multiple workers on database queue" in warning for warning in result["warnings"]))
 
     def test_tool_wrappers_work_when_apache_and_supervisor_missing(self):
         self.assertIn("لا توجد", apache_5xx_summary({"config": {"apache": {"access_logs": ["missing"]}, "logs": {"max_lines": 20}}})["summary_text"])

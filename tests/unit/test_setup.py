@@ -11,6 +11,7 @@ from matrix_scanner.setup import (
     InvalidServiceSelection,
     ServiceInfo,
     build_config_yaml,
+    discover_critical_services,
     detect_applications,
     filter_setup_services,
     parse_service_selection,
@@ -217,8 +218,15 @@ class SetupTests(unittest.TestCase):
         applications = detect_applications([existing, missing])
 
         self.assertEqual(applications[0].type, "laravel")
-        self.assertTrue(applications[0].log_path.endswith("storage\\logs\\laravel.log") or applications[0].log_path.endswith("storage/logs/laravel.log"))
+        self.assertTrue(applications[0].log_path.endswith("storage\\logs") or applications[0].log_path.endswith("storage/logs"))
         self.assertEqual(applications[1].log_path, "")
+
+    def test_critical_service_discovery_adds_active_mysqld(self):
+        with mock.patch("matrix_scanner.setup._systemd_active_state", side_effect=lambda name: "active" if name == "mysqld" else ""):
+            with mock.patch("matrix_scanner.setup._process_list_text", return_value=""):
+                services = discover_critical_services()
+
+        self.assertIn("mysqld", [service.name for service in services])
 
     def test_cpanel_laravel_app_detection(self):
         from matrix_scanner.setup import discover_cpanel_laravel_apps
@@ -234,6 +242,18 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(applications[0].type, "laravel")
         self.assertIn("storage", applications[0].log_path)
         self.assertIn("logs", applications[0].log_path)
+
+    def test_cpanel_laravel_app_detection_finds_nested_public_app(self):
+        from matrix_scanner.setup import discover_cpanel_laravel_apps
+
+        app = Path("/home/innvi/public_html/public/new-design")
+
+        with mock.patch("matrix_scanner.setup.Path.exists", return_value=True):
+            with mock.patch("matrix_scanner.setup.Path.glob", return_value=[app]):
+                applications = discover_cpanel_laravel_apps("/home")
+
+        self.assertEqual(applications[0].path, str(app))
+        self.assertTrue(applications[0].log_path.endswith("storage\\logs") or applications[0].log_path.endswith("storage/logs"))
 
     def test_gunicorn_service_is_not_classified_as_laravel(self):
         services = [ServiceInfo("django-app", working_directory="/opt/django", exec_start="/venv/bin/gunicorn project.wsgi")]

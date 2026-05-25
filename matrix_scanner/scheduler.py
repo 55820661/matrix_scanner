@@ -5,8 +5,10 @@ from typing import Any
 
 from matrix_scanner import db
 from matrix_scanner.alerts.cooldown import filter_alerts_for_cooldown
+from matrix_scanner.alerts.incident_rules import evaluate_incident_alerts
 from matrix_scanner.alerts.notifier import notify_alerts
 from matrix_scanner.alerts.rules import evaluate_alerts
+from matrix_scanner.scanners import incident
 from matrix_scanner.scanners.laravel import scan_laravel
 from matrix_scanner.scanners.mysql import scan_mysql
 from matrix_scanner.scanners.nginx import scan_nginx
@@ -25,6 +27,9 @@ def run_scan(conn, config: dict[str, Any], *, telegram_token: str | None = None,
         "services": {k: v.get("status") for k, v in raw.get("services", {}).items()},
     }
     alerts = evaluate_alerts(raw, config.get("thresholds", {}))
+    if config.get("incident_alerts_enabled", False):
+        raw["incident"] = collect_incident_scan(config)
+        alerts.extend(evaluate_incident_alerts(raw))
     alerts_to_store = filter_alerts_for_cooldown(conn, alerts, int(config.get("alert_cooldown_minutes", 360))) if config.get("alerts_enabled", True) else []
     finished = datetime.now(timezone.utc)
     scan_id = db.insert_scan_result(
@@ -58,6 +63,23 @@ def collect_scan(config: dict[str, Any]) -> dict[str, Any]:
             as_int(mysql.get("timeout_seconds", 5), 5),
         ),
         "laravel": scan_laravel_if_configured(laravel, max_lines),
+    }
+
+
+def collect_incident_scan(config: dict[str, Any]) -> dict[str, Any]:
+    logs = config.get("logs", {})
+    apache = config.get("apache", {})
+    security = config.get("security_scan", {})
+    max_lines = as_int(logs.get("max_lines", 500), 500)
+    return {
+        "suspicious_cron": incident.suspicious_cron_scan(security.get("cron_paths")),
+        "suspicious_files": incident.suspicious_files_scan(security.get("file_patterns")),
+        "laravel_exceptions": incident.laravel_exception_summary(config, max_lines),
+        "laravel_log_health": incident.laravel_log_health(config),
+        "apache_5xx": incident.apache_5xx_summary(apache.get("access_logs") or apache.get("domlogs"), max_lines),
+        "apache_errors": incident.apache_error_summary(apache.get("error_logs"), max_lines),
+        "queue_workers": incident.queue_workers_summary(),
+        "supervisor": incident.supervisor_summary(config.get("supervisor", {}).get("config_paths")),
     }
 
 

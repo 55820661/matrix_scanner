@@ -12,8 +12,8 @@ from typing import Any
 from matrix_scanner.security import redact, truncate_text
 
 SAFE_ENV_KEYS = {"APP_ENV", "APP_DEBUG", "LOG_CHANNEL", "LOG_LEVEL", "QUEUE_CONNECTION", "CACHE_DRIVER", "SESSION_DRIVER"}
-APACHE_ERROR_DEFAULTS = ["/usr/local/apache/logs/error_log", "/var/log/apache2/error.log", "/var/log/httpd/error_log"]
-APACHE_ACCESS_DEFAULTS = ["/usr/local/apache/domlogs", "/var/log/apache2/access.log", "/var/log/httpd/access_log"]
+APACHE_ERROR_DEFAULTS = ["/etc/apache2/logs/error_log", "/usr/local/apache/logs/error_log", "/var/log/apache2/error.log", "/var/log/httpd/error_log"]
+APACHE_ACCESS_DEFAULTS = ["/etc/apache2/logs/domlogs", "/usr/local/apache/domlogs", "/var/log/apache2/access.log", "/var/log/httpd/access_log"]
 SUSPICIOUS_FILE_PATTERNS = ["/usr/share/man/*/.*", "/tmp/.*", "/var/tmp/.*", "/dev/shm/.*"]
 
 
@@ -34,16 +34,20 @@ def top_processes(limit: int = 10) -> dict[str, Any]:
 
 
 def apache_error_summary(paths: list[str] | None = None, max_lines: int = 500) -> dict[str, Any]:
-    lines = _read_many_logs(paths or APACHE_ERROR_DEFAULTS, max_lines)
+    lines = _read_many_logs_with_sources(paths or APACHE_ERROR_DEFAULTS, max_lines)
     groups: dict[str, dict[str, Any]] = {}
-    for line in lines:
+    for source, line in lines:
         item = classify_apache_error(line)
-        group = groups.setdefault(item["type"], {**{k: item[k] for k in ("type", "title", "evaluation", "explanation", "suggested_action")}, "count": 0, "last_seen": "", "examples": []})
+        group = groups.setdefault(item["type"], {**{k: item[k] for k in ("type", "title", "evaluation", "explanation", "suggested_action")}, "count": 0, "last_seen": "", "log_files": Counter(), "examples": []})
         group["count"] += 1
         group["last_seen"] = item["timestamp"] or group["last_seen"]
+        group["log_files"][source] += 1
         if len(group["examples"]) < 2:
             group["examples"].append(item["example"])
-    return {"status": "ok", "total_lines": len(lines), "groups": sorted(groups.values(), key=lambda row: row["count"], reverse=True)}
+    rows = []
+    for group in groups.values():
+        rows.append({**group, "log_files": dict(group["log_files"].most_common(5))})
+    return {"status": "ok", "total_lines": len(lines), "groups": sorted(rows, key=lambda row: row["count"], reverse=True)}
 
 
 def classify_apache_error(line: str) -> dict[str, str]:
@@ -62,21 +66,24 @@ def classify_apache_error(line: str) -> dict[str, str]:
 
 
 def apache_5xx_summary(paths: list[str] | None = None, max_lines: int = 1000) -> dict[str, Any]:
-    lines = _read_many_logs(paths or APACHE_ACCESS_DEFAULTS, max_lines)
-    groups: dict[tuple[str, str], dict[str, Any]] = {}
-    for line in lines:
+    effective_max_lines = max(max_lines, 5000)
+    lines = _read_many_logs_with_sources(paths or APACHE_ACCESS_DEFAULTS, effective_max_lines)
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for source, line in lines:
         item = _parse_access_5xx(line)
         if not item:
             continue
-        key = (item["status"], item["endpoint"])
-        group = groups.setdefault(key, {"status": item["status"], "endpoint": item["endpoint"], "count": 0, "ips": Counter(), "user_agents": Counter()})
+        domain = _domain_from_log_source(source)
+        key = (item["status"], item["endpoint"], domain)
+        group = groups.setdefault(key, {"status": item["status"], "endpoint": item["endpoint"], "domain": domain, "log_file": source, "count": 0, "latest_timestamp": "", "ips": Counter(), "user_agents": Counter()})
         group["count"] += 1
+        group["latest_timestamp"] = item["timestamp"] or group["latest_timestamp"]
         group["ips"][item["ip"]] += 1
         if item["user_agent"]:
             group["user_agents"][item["user_agent"]] += 1
     rows = []
     for group in groups.values():
-        rows.append({**group, "ips": dict(group["ips"].most_common(5)), "user_agents": dict(group["user_agents"].most_common(3))})
+        rows.append({**group, "ips": dict(group["ips"].most_common(5)), "user_agents": dict(group["user_agents"].most_common(3)), "sample_user_agent": next(iter(group["user_agents"]), "")})
     return {"status": "ok", "rows": sorted(rows, key=lambda row: row["count"], reverse=True)}
 
 
@@ -126,18 +133,26 @@ def laravel_env_sanity(config: dict[str, Any]) -> dict[str, Any]:
 
 def laravel_exception_summary(config: dict[str, Any], max_lines: int = 500) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
-    log_paths = _laravel_log_paths(config)
+    log_paths = _laravel_log_paths_with_apps(config)
     if not log_paths:
         return {"status": "ok", "groups": [], "message": "No Laravel log paths configured."}
-    for log_path in log_paths:
-        for line in _tail_lines(log_path, max_lines):
-            item = classify_laravel_exception(line)
-            if not item:
+    for item in log_paths:
+        app_path = item["app_path"]
+        log_path = item["log_path"]
+        for event in _laravel_log_events(_tail_lines(log_path, max_lines)):
+            finding = classify_laravel_exception(event)
+            if not finding:
                 continue
-            group = groups.setdefault(item["type"], {**item, "count": 0})
+            group = groups.setdefault(finding["type"], {**finding, "count": 0, "app_paths": Counter()})
             group["count"] += 1
-            group["latest_timestamp"] = item["latest_timestamp"] or group.get("latest_timestamp", "")
-    return {"status": "ok", "groups": sorted(groups.values(), key=lambda row: row["count"], reverse=True)}
+            group["app_paths"][app_path] += 1
+            group["latest_timestamp"] = finding["latest_timestamp"] or group.get("latest_timestamp", "")
+            if finding.get("example"):
+                group["sample_message"] = group.get("sample_message") or finding["example"]
+    rows = []
+    for group in groups.values():
+        rows.append({**group, "affected_app_paths": dict(group["app_paths"].most_common(5))})
+    return {"status": "ok", "groups": sorted(rows, key=lambda row: row["count"], reverse=True)}
 
 
 def classify_laravel_exception(line: str) -> dict[str, str] | None:
@@ -164,10 +179,19 @@ def queue_workers_summary() -> dict[str, Any]:
         if "artisan" in args and "queue:work" in args:
             path = _extract_cwd_from_args(args)
             connection = _extract_queue_connection(args)
-            workers.append({"pid": proc["pid"], "user": proc["user"], "path": path, "queue_connection": connection, "args": args})
+            source = _worker_source(args)
+            workers.append({"pid": proc["pid"], "user": proc["user"], "path": path, "queue_connection": connection, "source": source, "args": args})
             per_path[(path, connection)] += 1
-    warnings = [f"أكثر من worker على database queue للتطبيق {path}" for (path, conn), count in per_path.items() if conn == "database" and count > 1]
-    return {"status": "ok", "workers": workers, "warnings": warnings}
+    warnings = []
+    groups = []
+    for (path, conn), count in sorted(per_path.items()):
+        users = sorted({worker["user"] for worker in workers if worker["path"] == path and worker["queue_connection"] == conn})
+        groups.append({"path": path, "queue_connection": conn, "count": count, "users": users})
+        if conn == "database" and count > 1:
+            warnings.append(f"Multiple workers on database queue for application {path}")
+        if path.startswith("/home/") and "root" in users:
+            warnings.append(f"Queue worker is running as root for cPanel application {path}")
+    return {"status": "ok", "workers": workers, "groups": groups, "warnings": warnings, "evaluation": "تحذير" if warnings else "جيد"}
 
 
 def supervisor_summary(paths: list[str] | None = None) -> dict[str, Any]:
@@ -227,14 +251,20 @@ def _exception(error_type: str, title: str, line: str, cause: str, action: str) 
 
 
 def _read_many_logs(paths: list[str], max_lines: int) -> list[str]:
+    return [line for _, line in _read_many_logs_with_sources(paths, max_lines)]
+
+
+def _read_many_logs_with_sources(paths: list[str], max_lines: int) -> list[tuple[str, str]]:
     lines = []
     for path in paths:
+        if not path:
+            continue
         p = Path(path)
         if p.is_dir():
             for child in sorted(p.glob("*"), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)[:20]:
-                lines.extend(_tail_lines(child, max_lines))
+                lines.extend((str(child), line) for line in _tail_lines(child, max_lines))
         else:
-            lines.extend(_tail_lines(p, max_lines))
+            lines.extend((str(p), line) for line in _tail_lines(p, max_lines))
     return lines[-max_lines:]
 
 
@@ -281,18 +311,43 @@ def _application_paths(config: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _laravel_log_paths(config: dict[str, Any]) -> list[str]:
+    return [item["log_path"] for item in _laravel_log_paths_with_apps(config)]
+
+
+def _laravel_log_paths_with_apps(config: dict[str, Any]) -> list[dict[str, str]]:
     paths = []
     laravel = config.get("laravel", {})
     if isinstance(laravel, dict) and laravel.get("log_path"):
         log_path = Path(str(laravel["log_path"]))
         if log_path.is_dir():
-            paths.extend(str(path) for path in log_path.glob("*.log") if path.exists())
+            paths.extend({"app_path": str(laravel.get("path", "")), "log_path": str(path)} for path in log_path.glob("*.log") if path.exists())
         else:
-            paths.append(str(log_path))
+            paths.append({"app_path": str(laravel.get("path", "")), "log_path": str(log_path)})
     for app in _application_paths(config):
         log_dir = Path(app["path"]) / "storage" / "logs"
-        paths.extend(str(path) for path in log_dir.glob("*.log") if path.exists())
-    return list(dict.fromkeys(paths))
+        paths.extend({"app_path": app["path"], "log_path": str(path)} for path in log_dir.glob("*.log") if path.exists())
+    seen = set()
+    result = []
+    for item in paths:
+        if item["log_path"] in seen:
+            continue
+        seen.add(item["log_path"])
+        result.append(item)
+    return result
+
+
+def _laravel_log_events(lines: list[str]) -> list[str]:
+    events: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        if _extract_laravel_time(line) and current:
+            events.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        events.append("\n".join(current))
+    return events
 
 
 def _dedupe_apps(apps: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -342,7 +397,16 @@ def _parse_access_5xx(line: str) -> dict[str, str] | None:
     status_code = right[0]
     if status_code not in {"500", "502", "503", "504"}:
         return None
-    return {"ip": left[0], "endpoint": request[1], "status": status_code, "user_agent": parts[5] if len(parts) > 5 else ""}
+    return {"ip": left[0], "endpoint": _normalize_endpoint(request[1]), "status": status_code, "timestamp": _extract_apache_time(line), "user_agent": truncate_text(redact(parts[5]), 120) if len(parts) > 5 else ""}
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    return endpoint.split("?", 1)[0] or "/"
+
+
+def _domain_from_log_source(source: str) -> str:
+    name = Path(source).name
+    return name.removesuffix("-ssl_log") if name else ""
 
 
 def _extract_laravel_time(line: str) -> str:
@@ -358,6 +422,15 @@ def _extract_cwd_from_args(args: str) -> str:
 def _extract_queue_connection(args: str) -> str:
     match = re.search(r"queue:work\s+([^\s]+)", args)
     return match.group(1) if match else ""
+
+
+def _worker_source(args: str) -> str:
+    lower = args.lower()
+    if "supervisor" in lower or "supervisord" in lower:
+        return "supervisor"
+    if "cron" in lower:
+        return "cron"
+    return "manual process"
 
 
 def _parse_supervisor_conf(path: Path) -> list[dict[str, str]]:

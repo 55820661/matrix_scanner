@@ -18,7 +18,14 @@ def summarize_laravel_log(path: str, max_lines: int = 500) -> dict:
     if not log_path.exists():
         return {"status": "unavailable", "reason": "file_not_found", "path": path}
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-max_lines:]
+        if log_path.is_dir():
+            candidates = sorted(log_path.glob("*.log"), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)[:10]
+            lines = []
+            for candidate in candidates:
+                lines.extend(candidate.read_text(encoding="utf-8", errors="ignore").splitlines()[-max_lines:])
+            lines = lines[-max_lines:]
+        else:
+            lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-max_lines:]
     except OSError as exc:
         return {"status": "unavailable", "reason": str(exc), "path": path}
     errors = [redact(line.strip()) for line in lines if any(token in line.lower() for token in ["error", "exception", "critical", "production.error"])]

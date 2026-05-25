@@ -37,6 +37,7 @@ def full_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = None
         f"الحالة العامة: {_overall_status(performance, alerts)}",
         "",
         performance_text,
+        _incident_sections(scan),
         "",
         "المشاكل المكتشفة:",
     ]
@@ -62,6 +63,7 @@ def telegram_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = 
         f"الحالة العامة: {_overall_status(performance, alerts)}",
         "",
         format_performance_telegram(performance["rows"], performance["service_rows"], performance["summary"]),
+        _incident_sections(scan),
         "",
         "المشاكل المكتشفة:",
     ]
@@ -75,6 +77,43 @@ def telegram_report(scan: dict[str, Any], alerts: list[dict[str, Any]] | None = 
             f"  الإجراء المقترح: {alert.get('suggested_action', '-')}",
         ])
     lines.extend(["", "الخلاصة:", performance["summary"]])
+    return "\n".join(lines)
+
+
+def _incident_sections(scan: dict[str, Any]) -> str:
+    incident = scan.get("incident", {})
+    if not incident:
+        return ""
+    lines: list[str] = []
+    sections = [
+        ("Apache Errors", _format_rows(incident.get("apache_errors", {}).get("groups", []), ["title", "count", "last_seen", "evaluation"])),
+        ("Apache 5xx", _format_rows(incident.get("apache_5xx", {}).get("rows", []), ["status", "endpoint", "domain", "count", "latest_timestamp"])),
+        ("Laravel Log Health", _format_rows(incident.get("laravel_log_health", {}).get("rows", []), ["path", "log_count", "total_size_bytes", "uses_daily_logs"])),
+        ("Laravel Exceptions", _format_rows(incident.get("laravel_exceptions", {}).get("groups", []), ["title", "count", "latest_timestamp"])),
+        ("Queue Workers", _format_rows(incident.get("queue_workers", {}).get("groups", []), ["path", "queue_connection", "count", "users"])),
+        ("Supervisor", _format_rows(incident.get("supervisor", {}).get("programs", []) or incident.get("supervisor", {}).get("configs", []), ["program", "status", "numprocs"])),
+    ]
+    for title, body in sections:
+        lines.extend(["", title, body or "- No findings in the current sample."])
+    warnings = incident.get("queue_workers", {}).get("warnings", [])
+    cron = incident.get("suspicious_cron", {}).get("findings", [])
+    files = incident.get("suspicious_files", {}).get("findings", [])
+    lines.extend(["", "Security/Cron"])
+    if not warnings and not cron and not files:
+        lines.append("- No suspicious cron, file, or queue findings in the current sample.")
+    for warning in warnings[:5]:
+        lines.append(f"- queue warning: {warning}")
+    if cron:
+        lines.append(f"- suspicious cron findings: {len(cron)}")
+    if files:
+        lines.append(f"- suspicious file findings: {len(files)}")
+    return "\n".join(lines)
+
+
+def _format_rows(rows: list[dict[str, Any]], keys: list[str]) -> str:
+    lines = []
+    for row in rows[:5]:
+        lines.append("- " + ", ".join(f"{key}={row.get(key, '-')}" for key in keys))
     return "\n".join(lines)
 
 

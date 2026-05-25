@@ -11,6 +11,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "scan_interval_minutes": 60,
     "metrics_retention_days": 14,
     "alerts_enabled": True,
+    "incident_alerts_enabled": True,
     "telegram_enabled": False,
     "confirmation_timeout_seconds": 120,
     "laravel": {
@@ -23,6 +24,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "nginx_access": "/var/log/nginx/access.log",
         "nginx_error": "/var/log/nginx/error.log",
         "max_lines": 500,
+    },
+    "apache": {
+        "error_logs": ["/etc/apache2/logs/error_log", "/usr/local/apache/logs/error_log", "/var/log/httpd/error_log"],
+        "domlogs": ["/etc/apache2/logs/domlogs", "/usr/local/apache/domlogs"],
+        "access_logs": ["/etc/apache2/logs/domlogs", "/usr/local/apache/domlogs"],
     },
     "thresholds": {
         "cpu_percent": 85,
