@@ -200,9 +200,11 @@ class SetupTests(unittest.TestCase):
     def test_service_working_directory_becomes_application(self):
         services = [ServiceInfo("app", working_directory="/opt/app")]
 
-        applications = detect_applications(services)
+        with mock.patch("matrix_scanner.setup.discover_cpanel_laravel_apps") as discover_cpanel:
+            applications = detect_applications(services)
 
         self.assertEqual(applications, [ApplicationInfo("app", "/opt/app", "unknown", "")])
+        discover_cpanel.assert_not_called()
 
     def test_multiple_services_create_multiple_applications(self):
         services = [ServiceInfo("app-one", working_directory="/opt/one"), ServiceInfo("app-two", working_directory="/opt/two")]
@@ -210,6 +212,16 @@ class SetupTests(unittest.TestCase):
         applications = detect_applications(services)
 
         self.assertEqual([app.path for app in applications], ["/opt/one", "/opt/two"])
+
+    def test_detect_applications_can_include_cpanel_apps_explicitly(self):
+        services = [ServiceInfo("app", working_directory="/opt/app")]
+        cpanel_app = ApplicationInfo("detected-user-public-html", "/home/user/public_html", "laravel", "/home/user/public_html/storage/logs")
+
+        with mock.patch("matrix_scanner.setup.discover_cpanel_laravel_apps", return_value=[cpanel_app]) as discover_cpanel:
+            applications = detect_applications(services, include_cpanel=True)
+
+        self.assertEqual([app.path for app in applications], ["/opt/app", "/home/user/public_html"])
+        discover_cpanel.assert_called_once_with("/home")
 
     def test_laravel_log_path_detected_only_when_file_exists(self):
         existing = ServiceInfo("laravel-app", working_directory="tests/fixtures/laravel-app")

@@ -403,7 +403,7 @@ def write_config(path: Path, content: str, *, force: bool = False, confirm: Call
     return True
 
 
-def detect_applications(services: list[ServiceInfo]) -> list[ApplicationInfo]:
+def detect_applications(services: list[ServiceInfo], *, include_cpanel: bool = False, cpanel_home: str = "/home") -> list[ApplicationInfo]:
     applications: list[ApplicationInfo] = []
     for service in services:
         if not service.working_directory:
@@ -412,7 +412,9 @@ def detect_applications(services: list[ServiceInfo]) -> list[ApplicationInfo]:
         app_type = detect_application_type(service, Path(path))
         log_path = detect_application_log_path(app_type, Path(path))
         applications.append(ApplicationInfo(service_name=service.name, path=path, type=app_type, log_path=log_path))
-    return _dedupe_applications(applications + discover_cpanel_laravel_apps())
+    if include_cpanel:
+        applications.extend(discover_cpanel_laravel_apps(cpanel_home))
+    return _dedupe_applications(applications)
 
 
 def discover_cpanel_laravel_apps(base: str = "/home") -> list[ApplicationInfo]:
@@ -477,7 +479,7 @@ def run_interactive_setup(
     selected = prompt_service_selection(input_func, services)
 
     enriched = [enrich_service_metadata(ServiceInfo(name=service)) for service in selected]
-    applications = detect_applications(enriched)
+    applications = detect_applications(enriched, include_cpanel=True)
     nginx_access = detect_nginx_log_path("/var/log/nginx/access.log")
     nginx_error = detect_nginx_log_path("/var/log/nginx/error.log")
     apache_error = detect_existing_path("/etc/apache2/logs/error_log") or detect_existing_path("/usr/local/apache/logs/error_log") or detect_existing_path("/var/log/httpd/error_log")
