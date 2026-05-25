@@ -19,7 +19,7 @@ def apache_error_summary(context: dict) -> dict:
 def apache_5xx_summary(context: dict) -> dict:
     apache = context["config"].get("apache", {})
     result = incident.apache_5xx_summary(apache.get("access_logs") or apache.get("domlogs"), int(context["config"].get("logs", {}).get("max_lines", 1000)))
-    return _with_summary("Apache 5xx Summary", result, _rows(result.get("rows", []), ["status", "endpoint", "count"]))
+    return _with_summary("Apache 5xx Summary", result, _apache_5xx_rows(result.get("rows", [])))
 
 
 def laravel_log_health(context: dict) -> dict:
@@ -93,9 +93,37 @@ def _groups(groups: list[dict[str, Any]]) -> str:
     for group in groups[:8]:
         lines.extend([
             f"- {group['title']}",
-            f"  count: {group['count']}, evaluation: {group['evaluation']}",
+            f"  count: {group['count']}",
+            f"  latest: {group.get('latest_timestamp') or '-'}",
+            f"  recent_1h: {group.get('recent_1h_count', 0)}",
+            f"  recent_24h: {group.get('recent_24h_count', 0)}",
+            f"  sample_client_ip: {group.get('sample_client_ip') or '-'}",
+            f"  sample_path: {group.get('sample_path') or group.get('sample_referer') or '-'}",
+            f"  evaluation: {group['evaluation']}",
+            f"  message: {group.get('message', '-')}",
             f"  explanation: {group['explanation']}",
             f"  suggested_action: {group['suggested_action']}",
+        ])
+    return "\n".join(lines)
+
+
+def _apache_5xx_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "لا توجد نتائج ضمن العينة الحالية."
+    lines = []
+    for row in rows[:10]:
+        lines.extend([
+            f"- status: {row.get('status')}",
+            f"  endpoint: {row.get('endpoint')}",
+            f"  count: {row.get('count')}",
+            f"  latest: {row.get('latest_timestamp') or '-'}",
+            f"  recent_1h: {row.get('recent_1h_count', 0)}",
+            f"  recent_24h: {row.get('recent_24h_count', 0)}",
+            f"  source: {row.get('source') or row.get('log_file') or '-'}",
+            f"  sample_full_path: {row.get('sample_full_path') or '-'}",
+            f"  sample_user_agent: {row.get('sample_user_agent') or '-'}",
+            f"  evaluation: {row.get('evaluation', '-')}",
+            f"  message: {row.get('message', '-')}",
         ])
     return "\n".join(lines)
 

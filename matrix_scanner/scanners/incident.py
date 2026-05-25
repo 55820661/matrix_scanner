@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,20 +34,49 @@ def top_processes(limit: int = 10) -> dict[str, Any]:
     return {"status": "ok", "rows": rows}
 
 
-def apache_error_summary(paths: list[str] | None = None, max_lines: int = 500) -> dict[str, Any]:
+def apache_error_summary(paths: list[str] | None = None, max_lines: int = 500, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
     lines = _read_many_logs_with_sources(paths or APACHE_ERROR_DEFAULTS, max_lines)
     groups: dict[str, dict[str, Any]] = {}
     for source, line in lines:
         item = classify_apache_error(line)
-        group = groups.setdefault(item["type"], {**{k: item[k] for k in ("type", "title", "evaluation", "explanation", "suggested_action")}, "count": 0, "last_seen": "", "log_files": Counter(), "examples": []})
+        seen_at = item["seen_at"]
+        group = groups.setdefault(item["type"], {**{k: item[k] for k in ("type", "title", "explanation", "suggested_action")}, "count": 0, "latest_timestamp": "", "_latest_dt": None, "recent_1h_count": 0, "recent_24h_count": 0, "client_ips": Counter(), "paths": Counter(), "referers": Counter(), "log_files": Counter(), "examples": []})
         group["count"] += 1
-        group["last_seen"] = item["timestamp"] or group["last_seen"]
+        if seen_at:
+            if group["_latest_dt"] is None or seen_at > group["_latest_dt"]:
+                group["_latest_dt"] = seen_at
+                group["latest_timestamp"] = _format_dt(seen_at)
+            if seen_at >= now - timedelta(hours=1):
+                group["recent_1h_count"] += 1
+            if seen_at >= now - timedelta(hours=24):
+                group["recent_24h_count"] += 1
+        if item["client_ip"]:
+            group["client_ips"][item["client_ip"]] += 1
+        if item["path"]:
+            group["paths"][item["path"]] += 1
+        if item["referer"]:
+            group["referers"][item["referer"]] += 1
         group["log_files"][source] += 1
         if len(group["examples"]) < 2:
             group["examples"].append(item["example"])
     rows = []
     for group in groups.values():
-        rows.append({**group, "log_files": dict(group["log_files"].most_common(5))})
+        latest = group.pop("_latest_dt", None)
+        evaluation, message = _activity_evaluation(group["count"], group["recent_1h_count"], latest, now, base=group["type"])
+        rows.append({
+            **group,
+            "last_seen": group["latest_timestamp"],
+            "evaluation": evaluation,
+            "message": message,
+            "sample_client_ip": _first_counter_key(group["client_ips"]),
+            "sample_path": _first_counter_key(group["paths"]),
+            "sample_referer": _first_counter_key(group["referers"]),
+            "client_ips": dict(group["client_ips"].most_common(5)),
+            "paths": dict(group["paths"].most_common(5)),
+            "referers": dict(group["referers"].most_common(3)),
+            "log_files": dict(group["log_files"].most_common(5)),
+        })
     return {"status": "ok", "total_lines": len(lines), "groups": sorted(rows, key=lambda row: row["count"], reverse=True)}
 
 
@@ -62,10 +92,20 @@ def classify_apache_error(line: str) -> dict[str, str]:
         base = _class("client_denied", "Apache client denied", "مراقبة", "طلب تم رفضه بقواعد access control.", "راجع القاعدة إذا كان الرفض غير متوقع.")
     else:
         base = _class("other_apache_error", "Other Apache errors", "مراقبة", "أخطاء Apache غير مصنفة.", "راجع الأمثلة المختصرة عند التكرار.")
-    return {**base, "timestamp": _extract_apache_time(line), "example": truncate_text(redact(line.strip()), 220)}
+    timestamp = _extract_apache_time(line)
+    return {
+        **base,
+        "timestamp": timestamp,
+        "seen_at": _parse_apache_datetime(timestamp),
+        "client_ip": _extract_client_ip(line),
+        "path": _extract_request_path(line),
+        "referer": _extract_referer(line),
+        "example": truncate_text(redact(line.strip()), 220),
+    }
 
 
-def apache_5xx_summary(paths: list[str] | None = None, max_lines: int = 1000) -> dict[str, Any]:
+def apache_5xx_summary(paths: list[str] | None = None, max_lines: int = 1000, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
     effective_max_lines = max(max_lines, 5000)
     lines = _read_many_logs_with_sources(paths or APACHE_ACCESS_DEFAULTS, effective_max_lines)
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -75,15 +115,26 @@ def apache_5xx_summary(paths: list[str] | None = None, max_lines: int = 1000) ->
             continue
         domain = _domain_from_log_source(source)
         key = (item["status"], item["endpoint"], domain)
-        group = groups.setdefault(key, {"status": item["status"], "endpoint": item["endpoint"], "domain": domain, "log_file": source, "count": 0, "latest_timestamp": "", "ips": Counter(), "user_agents": Counter()})
+        group = groups.setdefault(key, {"status": item["status"], "endpoint": item["endpoint"], "domain": domain, "log_file": source, "source": Path(source).name, "count": 0, "latest_timestamp": "", "_latest_dt": None, "recent_1h_count": 0, "recent_24h_count": 0, "ips": Counter(), "user_agents": Counter(), "sample_full_path": ""})
         group["count"] += 1
-        group["latest_timestamp"] = item["timestamp"] or group["latest_timestamp"]
+        seen_at = item.get("seen_at")
+        if seen_at:
+            if group["_latest_dt"] is None or seen_at > group["_latest_dt"]:
+                group["_latest_dt"] = seen_at
+                group["latest_timestamp"] = _format_dt(seen_at)
+            if seen_at >= now - timedelta(hours=1):
+                group["recent_1h_count"] += 1
+            if seen_at >= now - timedelta(hours=24):
+                group["recent_24h_count"] += 1
+        group["sample_full_path"] = group["sample_full_path"] or item["full_path"]
         group["ips"][item["ip"]] += 1
         if item["user_agent"]:
             group["user_agents"][item["user_agent"]] += 1
     rows = []
     for group in groups.values():
-        rows.append({**group, "ips": dict(group["ips"].most_common(5)), "user_agents": dict(group["user_agents"].most_common(3)), "sample_user_agent": next(iter(group["user_agents"]), "")})
+        latest = group.pop("_latest_dt", None)
+        evaluation, message = _activity_evaluation(group["count"], group["recent_1h_count"], latest, now, base="apache_5xx")
+        rows.append({**group, "evaluation": evaluation, "message": message, "ips": dict(group["ips"].most_common(5)), "user_agents": dict(group["user_agents"].most_common(3)), "sample_user_agent": _first_counter_key(group["user_agents"])})
     return {"status": "ok", "rows": sorted(rows, key=lambda row: row["count"], reverse=True)}
 
 
@@ -381,8 +432,34 @@ def _mtime(path: Path | None) -> str:
 
 
 def _extract_apache_time(line: str) -> str:
-    match = re.search(r"\[(?:[A-Za-z]{3} )?([^\]]+)\]", line)
+    match = re.search(r"\[([^\]]*(?:\d{4}|[+-]\d{4})[^\]]*)\]", line)
     return match.group(1) if match else ""
+
+
+def _parse_apache_datetime(value: str) -> datetime | None:
+    value = value.strip()
+    if not value:
+        return None
+    normalized = re.sub(r"\.\d{3,6}", "", value)
+    formats = (
+        "%d/%b/%Y:%H:%M:%S %z",
+        "%a %b %d %H:%M:%S %Y",
+        "%b %d %H:%M:%S %Y",
+        "%Y-%m-%d %H:%M:%S",
+    )
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
+def _format_dt(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _parse_access_5xx(line: str) -> dict[str, str] | None:
@@ -397,7 +474,8 @@ def _parse_access_5xx(line: str) -> dict[str, str] | None:
     status_code = right[0]
     if status_code not in {"500", "502", "503", "504"}:
         return None
-    return {"ip": left[0], "endpoint": _normalize_endpoint(request[1]), "status": status_code, "timestamp": _extract_apache_time(line), "user_agent": truncate_text(redact(parts[5]), 120) if len(parts) > 5 else ""}
+    timestamp = _extract_apache_time(line)
+    return {"ip": left[0], "endpoint": _normalize_endpoint(request[1]), "full_path": truncate_text(redact(request[1]), 160), "status": status_code, "timestamp": timestamp, "seen_at": _parse_apache_datetime(timestamp), "user_agent": truncate_text(redact(parts[5]), 120) if len(parts) > 5 else ""}
 
 
 def _normalize_endpoint(endpoint: str) -> str:
@@ -407,6 +485,40 @@ def _normalize_endpoint(endpoint: str) -> str:
 def _domain_from_log_source(source: str) -> str:
     name = Path(source).name
     return name.removesuffix("-ssl_log") if name else ""
+
+
+def _extract_client_ip(line: str) -> str:
+    match = re.search(r"\[client ([^\]:\s]+)(?::\d+)?\]", line)
+    return match.group(1) if match else ""
+
+
+def _extract_request_path(line: str) -> str:
+    request_match = re.search(r'request:\s+"[A-Z]+\s+([^"\s]+)', line)
+    if request_match:
+        return truncate_text(redact(_normalize_endpoint(request_match.group(1))), 160)
+    uri_match = re.search(r"uri:\s+([^,\s]+)", line)
+    if uri_match:
+        return truncate_text(redact(_normalize_endpoint(uri_match.group(1))), 160)
+    return ""
+
+
+def _extract_referer(line: str) -> str:
+    match = re.search(r'referer:\s*([^,\s]+)', line)
+    return truncate_text(redact(match.group(1)), 160) if match else ""
+
+
+def _activity_evaluation(count: int, recent_1h_count: int, latest: datetime | None, now: datetime, *, base: str) -> tuple[str, str]:
+    if recent_1h_count <= 0:
+        return "مراقبة", "مشاكل قديمة داخل العينة ولا تظهر نشطة حاليًا"
+    if base == "apache_5xx" and recent_1h_count >= 20:
+        return "حرج", "أخطاء 5xx نشطة ومتكررة خلال آخر ساعة"
+    if base != "apache_5xx" and recent_1h_count >= 50:
+        return "حرج", "أخطاء Apache نشطة ومتكررة خلال آخر ساعة"
+    return "تحذير", "المشكلة ظهرت خلال آخر ساعة وتحتاج مراجعة"
+
+
+def _first_counter_key(counter: Counter) -> str:
+    return counter.most_common(1)[0][0] if counter else ""
 
 
 def _extract_laravel_time(line: str) -> str:

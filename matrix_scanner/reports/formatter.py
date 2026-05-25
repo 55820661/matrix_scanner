@@ -86,8 +86,8 @@ def _incident_sections(scan: dict[str, Any]) -> str:
         return ""
     lines: list[str] = []
     sections = [
-        ("Apache Errors", _format_rows(incident.get("apache_errors", {}).get("groups", []), ["title", "count", "last_seen", "evaluation"])),
-        ("Apache 5xx", _format_rows(incident.get("apache_5xx", {}).get("rows", []), ["status", "endpoint", "domain", "count", "latest_timestamp"])),
+        ("Apache Errors", _format_rows(incident.get("apache_errors", {}).get("groups", []), ["title", "count", "latest_timestamp", "recent_1h_count", "recent_24h_count", "evaluation"])),
+        ("Apache 5xx", _format_rows(incident.get("apache_5xx", {}).get("rows", []), ["status", "endpoint", "domain", "count", "latest_timestamp", "recent_1h_count", "recent_24h_count", "evaluation"])),
         ("Laravel Log Health", _format_rows(incident.get("laravel_log_health", {}).get("rows", []), ["path", "log_count", "total_size_bytes", "uses_daily_logs"])),
         ("Laravel Exceptions", _format_rows(incident.get("laravel_exceptions", {}).get("groups", []), ["title", "count", "latest_timestamp"])),
         ("Queue Workers", _format_rows(incident.get("queue_workers", {}).get("groups", []), ["path", "queue_connection", "count", "users"])),

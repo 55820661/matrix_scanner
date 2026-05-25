@@ -1,5 +1,6 @@
 import stat
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,6 +16,21 @@ class IncidentToolsTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["groups"], [])
+
+    def test_apache_error_summary_extracts_latest_and_recent_counts(self):
+        lines = [
+            ("/etc/apache2/logs/error_log", '[Sun May 24 14:38:48.123456 2026] [proxy_fcgi:error] [pid 1] [client 198.51.100.10:443] AH01075: Error dispatching request to : (polling), referer: https://example.com/en/cars'),
+            ("/etc/apache2/logs/error_log", '[Sun May 24 15:10:00 2026] [proxy_fcgi:error] [pid 1] [client 198.51.100.11:443] AH01075: Error dispatching request to : (polling)'),
+        ]
+        now = datetime(2026, 5, 24, 15, 30, tzinfo=timezone.utc)
+        with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=lines):
+            result = incident.apache_error_summary(["error_log"], 100, now=now)
+
+        group = result["groups"][0]
+        self.assertEqual(group["latest_timestamp"], "2026-05-24 15:10:00 UTC")
+        self.assertEqual(group["recent_1h_count"], 2)
+        self.assertEqual(group["recent_24h_count"], 2)
+        self.assertEqual(group["sample_client_ip"], "198.51.100.10")
 
     def test_supervisor_summary_works_when_supervisor_missing(self):
         with patch("matrix_scanner.scanners.incident.shutil.which", return_value=None):
@@ -83,7 +99,7 @@ class IncidentToolsTests(unittest.TestCase):
             '198.51.100.3 - - [24/May/2026:10:00:02 +0000] "POST /api/b HTTP/1.1" 504 12 "-" "UA3"',
         ]
         with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=[("domlog", line) for line in lines]):
-            result = incident.apache_5xx_summary(["domlog"], 100)
+            result = incident.apache_5xx_summary(["domlog"], 100, now=datetime(2026, 5, 24, 11, 0, tzinfo=timezone.utc))
 
         endpoints = {(row["status"], row["endpoint"]): row["count"] for row in result["rows"]}
         self.assertEqual(endpoints[("500", "/api/a")], 1)
@@ -96,12 +112,30 @@ class IncidentToolsTests(unittest.TestCase):
             ("/etc/apache2/logs/domlogs/example.com-ssl_log", '198.51.100.2 - - [24/May/2026:10:01:00 +0000] "GET /api/a HTTP/1.1" 500 12 "-" "UA2"'),
         ]
         with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=lines):
-            result = incident.apache_5xx_summary(["/etc/apache2/logs/domlogs"], 100)
+            result = incident.apache_5xx_summary(["/etc/apache2/logs/domlogs"], 100, now=datetime(2026, 5, 24, 10, 30, tzinfo=timezone.utc))
 
         row = result["rows"][0]
         self.assertEqual(row["endpoint"], "/api/a")
         self.assertEqual(row["domain"], "example.com")
-        self.assertEqual(row["latest_timestamp"], "24/May/2026:10:01:00 +0000")
+        self.assertEqual(row["latest_timestamp"], "2026-05-24 10:01:00 UTC")
+        self.assertEqual(row["recent_1h_count"], 2)
+        self.assertEqual(row["recent_24h_count"], 2)
+        self.assertEqual(row["source"], "example.com")
+        self.assertEqual(row["sample_full_path"], "/api/a?x=1")
+
+    def test_apache_5xx_old_errors_are_monitoring(self):
+        lines = [
+            ("/etc/apache2/logs/domlogs/example.com", '198.51.100.1 - - [24/May/2026:10:00:00 +0000] "GET /api/a?x=1 HTTP/1.1" 500 12 "-" "UA1"'),
+        ]
+        now = datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc)
+        with patch("matrix_scanner.scanners.incident._read_many_logs_with_sources", return_value=lines):
+            result = incident.apache_5xx_summary(["/etc/apache2/logs/domlogs"], 100, now=now)
+
+        row = result["rows"][0]
+        self.assertEqual(row["endpoint"], "/api/a")
+        self.assertEqual(row["recent_1h_count"], 0)
+        self.assertEqual(row["recent_24h_count"], 0)
+        self.assertEqual(row["evaluation"], "مراقبة")
 
     def test_laravel_exception_summary_classifies_common_errors(self):
         lines = [
